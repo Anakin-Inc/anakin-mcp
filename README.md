@@ -61,6 +61,30 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 
 Restart Claude Desktop.
 
+### Claude Code (Anthropic CLI)
+
+Edit `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "anakin": {
+      "command": "npx",
+      "args": ["-y", "anakin-mcp"],
+      "env": {
+        "ANAKIN_API_KEY": "ak-..."
+      }
+    }
+  }
+}
+```
+
+Or use Claude Code's built-in command:
+
+```bash
+claude mcp add anakin npx -y anakin-mcp -e ANAKIN_API_KEY=ak-...
+```
+
 ### Cursor
 
 Edit `~/.cursor/mcp.json` (user-scoped) or `./.cursor/mcp.json` (project-scoped):
@@ -80,6 +104,32 @@ Edit `~/.cursor/mcp.json` (user-scoped) or `./.cursor/mcp.json` (project-scoped)
 ```
 
 Restart Cursor.
+
+### Cline (VS Code extension — "Claude Dev")
+
+Edit Cline's settings file inside VS Code's globalStorage:
+
+| Platform | Path |
+|---|---|
+| macOS | `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
+| Linux | `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
+| Windows | `%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
+
+```json
+{
+  "mcpServers": {
+    "anakin": {
+      "command": "npx",
+      "args": ["-y", "anakin-mcp"],
+      "env": {
+        "ANAKIN_API_KEY": "ak-..."
+      }
+    }
+  }
+}
+```
+
+Reload the Cline VS Code extension (or restart VS Code).
 
 ### Windsurf
 

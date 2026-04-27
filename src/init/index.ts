@@ -53,7 +53,9 @@ Usage:
   anakin-mcp init                          Interactive (prompts before each write)
   anakin-mcp init --all                    Configure every detected client, no prompts
   anakin-mcp init --client=claude-desktop  Only configure Claude Desktop
+  anakin-mcp init --client=claude-code     Only configure Claude Code (Anthropic CLI)
   anakin-mcp init --client=cursor          Only configure Cursor
+  anakin-mcp init --client=cline           Only configure Cline (VS Code extension)
   anakin-mcp init --client=windsurf        Only configure Windsurf
   anakin-mcp init --client=vscode          Only configure VS Code (workspace .vscode/mcp.json)
 
