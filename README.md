@@ -131,6 +131,49 @@ Edit Cline's settings file inside VS Code's globalStorage:
 
 Reload the Cline VS Code extension (or restart VS Code).
 
+### Continue (IDE extension)
+
+Edit `~/.continue/config.json`:
+
+```json
+{
+  "experimental": {
+    "modelContextProtocolServers": [
+      {
+        "name": "anakin",
+        "command": "npx",
+        "args": ["-y", "anakin-mcp"],
+        "env": {
+          "ANAKIN_API_KEY": "ak-..."
+        }
+      }
+    ]
+  }
+}
+```
+
+If you have other entries under `experimental.modelContextProtocolServers`, append the `anakin` object to the existing array — don't overwrite. Reload the Continue extension.
+
+### Zed
+
+Edit `~/.config/zed/settings.json` (macOS / Linux) or `%APPDATA%/Zed/settings.json` (Windows):
+
+```json
+{
+  "context_servers": {
+    "anakin": {
+      "command": "npx",
+      "args": ["-y", "anakin-mcp"],
+      "env": {
+        "ANAKIN_API_KEY": "ak-..."
+      }
+    }
+  }
+}
+```
+
+Reload Zed.
+
 ### Windsurf
 
 Edit `~/.codeium/windsurf/mcp_config.json`:

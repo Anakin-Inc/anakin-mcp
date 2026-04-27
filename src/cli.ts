@@ -20,12 +20,13 @@ Usage:
   anakin-mcp                       Run the MCP server over stdio (default).
   anakin-mcp init                  Interactively configure MCP for detected
                                    agent clients (Claude Desktop, Claude Code,
-                                   Cursor, Cline, Windsurf, VS Code).
+                                   Cursor, Cline, Continue, Zed, Windsurf,
+                                   VS Code).
   anakin-mcp init --all            Configure every detected client without
                                    prompts.
   anakin-mcp init --client=<name>  Only configure one client.
                                    Names: claude-desktop, claude-code, cursor,
-                                   cline, windsurf, vscode.
+                                   cline, continue, zed, windsurf, vscode.
   anakin-mcp --version             Print version and exit.
   anakin-mcp --help                Print this help and exit.
 

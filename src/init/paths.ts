@@ -42,6 +42,8 @@ export type ClientName =
   | 'claude-code'
   | 'cursor'
   | 'cline'
+  | 'continue'
+  | 'zed'
   | 'windsurf'
   | 'vscode'
 
@@ -50,6 +52,8 @@ export const ALL_CLIENTS: ClientName[] = [
   'claude-code',
   'cursor',
   'cline',
+  'continue',
+  'zed',
   'windsurf',
   'vscode',
 ]
@@ -103,6 +107,21 @@ export function configPath(client: ClientName): string | null {
         'cline_mcp_settings.json',
       )
 
+    case 'continue':
+      // Continue's JSON config. (Newer Continue versions support a YAML
+      // form too, at ~/.continue/config.yaml — we target the JSON form
+      // because (a) it's still supported and (b) it doesn't require a
+      // YAML parser dependency.)
+      return path.join(home, '.continue', 'config.json')
+
+    case 'zed':
+      if (platform === 'win32') {
+        const appData = process.env['APPDATA'] ?? path.join(home, 'AppData', 'Roaming')
+        return path.join(appData, 'Zed', 'settings.json')
+      }
+      // macOS and Linux: ~/.config/zed/settings.json
+      return path.join(home, '.config', 'zed', 'settings.json')
+
     case 'windsurf':
       return path.join(home, '.codeium', 'windsurf', 'mcp_config.json')
 
@@ -124,6 +143,10 @@ export function displayName(client: ClientName): string {
       return 'Cursor'
     case 'cline':
       return 'Cline (VS Code extension)'
+    case 'continue':
+      return 'Continue (IDE extension)'
+    case 'zed':
+      return 'Zed'
     case 'windsurf':
       return 'Windsurf'
     case 'vscode':

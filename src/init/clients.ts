@@ -1,12 +1,25 @@
 /**
  * Read existing client config (if any), merge in the anakin entry, write back.
  *
- * Strategy: every client we support uses a JSON config with a top-level
- * `mcpServers` object whose keys are server names. We only set/overwrite
- * the `anakin` key — everything else the user has configured is preserved.
+ * Six of our eight supported clients use the standard JSON-object shape:
  *
- * VS Code is the exception: its workspace config uses `servers` instead of
- * `mcpServers`. We branch on client name for that one.
+ *   {
+ *     "<top-level-key>": {
+ *       "anakin": { "command": "...", "args": [...], "env": { ... } },
+ *       ... (other servers preserved)
+ *     }
+ *   }
+ *
+ * The top-level key is `mcpServers` for most (Claude Desktop, Claude Code,
+ * Cursor, Cline, Windsurf), `servers` for VS Code workspace MCP, and
+ * `context_servers` for Zed.
+ *
+ * Continue is the outlier — it stores MCP servers as an ARRAY at
+ * `experimental.modelContextProtocolServers`, with each entry carrying
+ * its own `name` field. Same effect, different shape.
+ *
+ * In every case we preserve any other servers the user has already
+ * configured — we only touch the `anakin` entry.
  */
 
 import fs from 'node:fs/promises'
@@ -49,14 +62,30 @@ async function writeJson(file: string, config: JsonConfig): Promise<void> {
   await fs.writeFile(file, JSON.stringify(config, null, 2) + '\n', 'utf8')
 }
 
-/** Merge the anakin entry into the config under the appropriate top-level key. */
-function mergeServerEntry(
-  client: ClientName,
+/** Top-level key the client uses to store its MCP servers as an object. */
+function objectStyleKey(client: ClientName): string | null {
+  switch (client) {
+    case 'claude-desktop':
+    case 'claude-code':
+    case 'cursor':
+    case 'cline':
+    case 'windsurf':
+      return 'mcpServers'
+    case 'vscode':
+      return 'servers'
+    case 'zed':
+      return 'context_servers'
+    case 'continue':
+      return null // array form — handled separately
+  }
+}
+
+/** Merge for clients that use { <key>: { anakin: entry, ... } }. */
+function mergeObjectStyle(
   config: JsonConfig,
+  key: string,
   entry: AnakinServerEntry,
 ): JsonConfig {
-  const key = client === 'vscode' ? 'servers' : 'mcpServers'
-
   const existing = (config[key] ?? {}) as JsonConfig
   return {
     ...config,
@@ -65,6 +94,53 @@ function mergeServerEntry(
       anakin: entry,
     },
   }
+}
+
+/**
+ * Continue stores MCP servers as an array under
+ * `experimental.modelContextProtocolServers`. Each entry has a `name` field
+ * we use to dedupe when the user already had `anakin` configured.
+ */
+function mergeContinue(config: JsonConfig, entry: AnakinServerEntry): JsonConfig {
+  const continueEntry = {
+    name: 'anakin',
+    command: entry.command,
+    args: entry.args,
+    env: entry.env,
+  }
+
+  const experimental = (config['experimental'] ?? {}) as JsonConfig
+  const existingArray = experimental['modelContextProtocolServers']
+  const servers = Array.isArray(existingArray)
+    ? (existingArray as Array<{ name?: string }>)
+    : []
+
+  const filtered = servers.filter((s) => s?.name !== 'anakin')
+  const updated = [...filtered, continueEntry]
+
+  return {
+    ...config,
+    experimental: {
+      ...experimental,
+      modelContextProtocolServers: updated,
+    },
+  }
+}
+
+/** Merge the anakin entry into the config using the right schema for the client. */
+function mergeServerEntry(
+  client: ClientName,
+  config: JsonConfig,
+  entry: AnakinServerEntry,
+): JsonConfig {
+  if (client === 'continue') {
+    return mergeContinue(config, entry)
+  }
+  const key = objectStyleKey(client)
+  if (key === null) {
+    throw new Error(`No merge strategy defined for client: ${client}`)
+  }
+  return mergeObjectStyle(config, key, entry)
 }
 
 /**

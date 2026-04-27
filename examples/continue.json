@@ -1,0 +1,14 @@
+{
+  "experimental": {
+    "modelContextProtocolServers": [
+      {
+        "name": "anakin",
+        "command": "npx",
+        "args": ["-y", "anakin-mcp"],
+        "env": {
+          "ANAKIN_API_KEY": "ak-replace-me"
+        }
+      }
+    ]
+  }
+}

@@ -56,6 +56,8 @@ Usage:
   anakin-mcp init --client=claude-code     Only configure Claude Code (Anthropic CLI)
   anakin-mcp init --client=cursor          Only configure Cursor
   anakin-mcp init --client=cline           Only configure Cline (VS Code extension)
+  anakin-mcp init --client=continue        Only configure Continue (IDE extension)
+  anakin-mcp init --client=zed             Only configure Zed editor
   anakin-mcp init --client=windsurf        Only configure Windsurf
   anakin-mcp init --client=vscode          Only configure VS Code (workspace .vscode/mcp.json)
 
