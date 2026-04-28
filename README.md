@@ -1,4 +1,4 @@
-# anakin-mcp
+# @anakin-io/mcp
 
 [![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -15,7 +15,7 @@ Gives AI agents in Claude Desktop, Cursor, Windsurf, VS Code, and any other MCP-
 One command configures every detected agent client:
 
 ```bash
-npx anakin-mcp init --all
+npx -y @anakin-io/mcp init --all
 ```
 
 You'll be prompted for your API key (or set `ANAKIN_API_KEY` first to skip the prompt). Get one free at [anakin.io/dashboard](https://anakin.io/dashboard) — 500 credits, no card required.
@@ -37,7 +37,7 @@ If you prefer to edit config files yourself, see [Manual setup per client](#manu
 | `agentic_search` | Multi-source deep research (1–5 min). |
 | `wire_action` | Execute pre-built website actions (login flows, form fills, etc.). |
 
-Each tool is a thin wrapper around [`@anakin/sdk`](https://github.com/Anakin-Inc/anakin-node) — there is no scraping logic in this package, just MCP-protocol glue.
+Each tool is a thin wrapper around the Anakin REST API — there is no scraping logic in this package, just MCP-protocol glue. The HTTP client is self-contained (`src/client.ts`); no runtime dependency on the [`@anakin-io/sdk`](https://github.com/Anakin-Inc/anakin-node) Node SDK.
 
 ## Manual setup per client
 
@@ -50,7 +50,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
   "mcpServers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "anakin-mcp"],
+      "args": ["-y", "@anakin-io/mcp"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -70,7 +70,7 @@ Edit `~/.claude/settings.json`:
   "mcpServers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "anakin-mcp"],
+      "args": ["-y", "@anakin-io/mcp"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -82,7 +82,7 @@ Edit `~/.claude/settings.json`:
 Or use Claude Code's built-in command:
 
 ```bash
-claude mcp add anakin npx -y anakin-mcp -e ANAKIN_API_KEY=ak-...
+claude mcp add anakin npx -y @anakin-io/mcp -e ANAKIN_API_KEY=ak-...
 ```
 
 ### Cursor
@@ -94,7 +94,7 @@ Edit `~/.cursor/mcp.json` (user-scoped) or `./.cursor/mcp.json` (project-scoped)
   "mcpServers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "anakin-mcp"],
+      "args": ["-y", "@anakin-io/mcp"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -120,7 +120,7 @@ Edit Cline's settings file inside VS Code's globalStorage:
   "mcpServers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "anakin-mcp"],
+      "args": ["-y", "@anakin-io/mcp"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -142,7 +142,7 @@ Edit `~/.continue/config.json`:
       {
         "name": "anakin",
         "command": "npx",
-        "args": ["-y", "anakin-mcp"],
+        "args": ["-y", "@anakin-io/mcp"],
         "env": {
           "ANAKIN_API_KEY": "ak-..."
         }
@@ -163,7 +163,7 @@ Edit `~/.config/zed/settings.json` (macOS / Linux) or `%APPDATA%/Zed/settings.js
   "context_servers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "anakin-mcp"],
+      "args": ["-y", "@anakin-io/mcp"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -183,7 +183,7 @@ Edit `~/.codeium/windsurf/mcp_config.json`:
   "mcpServers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "anakin-mcp"],
+      "args": ["-y", "@anakin-io/mcp"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -203,7 +203,7 @@ Edit `.vscode/mcp.json` in your workspace:
   "servers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "anakin-mcp"],
+      "args": ["-y", "@anakin-io/mcp"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -268,7 +268,7 @@ For local end-to-end testing with an actual MCP client, point the client at the 
 
 ## Related
 
-- [`@anakin/sdk`](https://github.com/Anakin-Inc/anakin-node) — Node.js / TypeScript SDK (used internally by this server)
+- [`@anakin-io/sdk`](https://github.com/Anakin-Inc/anakin-node) — Node.js / TypeScript SDK
 - [`anakin`](https://github.com/Anakin-Inc/anakin-py) — Python SDK
 - [`anakin-cli`](https://github.com/Anakin-Inc/anakin-cli) — Python CLI for human terminal use
 - [SKILL.md](https://anakin.io/agent-onboarding/SKILL.md) — agent-onboarding doc for non-MCP agents

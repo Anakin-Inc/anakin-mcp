@@ -36,7 +36,7 @@ export interface AnakinServerEntry {
 export function buildAnakinEntry(apiKey: string): AnakinServerEntry {
   return {
     command: 'npx',
-    args: ['-y', 'anakin-mcp'],
+    args: ['-y', '@anakin-io/mcp'],
     env: { ANAKIN_API_KEY: apiKey },
   }
 }
