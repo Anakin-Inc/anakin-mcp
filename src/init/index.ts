@@ -2,11 +2,11 @@
  * `anakin-mcp init` — auto-configure detected agent clients.
  *
  * Default mode: detect every supported client, ask the user before writing
- * each (Y/n). With --all, skip the prompts. With --client=<name>, only
- * configure one specific client.
+ * each (Y/n). With --all, skip the per-client confirmations. With
+ * --client=<name>, only configure one specific client.
  *
  * The user's API key is taken from $ANAKIN_API_KEY. If unset, the command
- * prompts for one (interactively) or exits with instructions (--all).
+ * always prompts for it — regardless of --all mode.
  */
 
 import readline from 'node:readline/promises'
@@ -62,7 +62,7 @@ Usage:
   anakin-mcp init --client=vscode          Only configure VS Code (workspace .vscode/mcp.json)
 
 Environment:
-  ANAKIN_API_KEY   If set, used as the API key. Otherwise the command prompts.
+  ANAKIN_API_KEY   API key. If not set, the command always prompts for it.
 `)
 }
 
@@ -99,21 +99,17 @@ async function detectClients(
   return detected
 }
 
-async function getApiKey(allMode: boolean): Promise<string> {
+async function getApiKey(): Promise<string> {
   const fromEnv = process.env['ANAKIN_API_KEY']
   if (fromEnv) return fromEnv
 
-  if (allMode) {
-    throw new Error(
-      'ANAKIN_API_KEY is not set. Either export it before running, or run ' +
-        '`anakin-mcp init` (without --all) for an interactive prompt.\n\n' +
-        'Get a key at https://anakin.io/dashboard.',
-    )
-  }
-
   const rl = readline.createInterface({ input, output })
+  process.stdout.write(
+    'anakin-mcp: ANAKIN_API_KEY is not set.\n' +
+    'Get a key at https://anakin.io/dashboard\n\n',
+  )
   const answer = await rl.question(
-    'ANAKIN_API_KEY (paste from https://anakin.io/dashboard): ',
+    'Paste your API key: ',
   )
   rl.close()
   const trimmed = answer.trim()
@@ -128,7 +124,7 @@ async function confirm(rl: readline.Interface, question: string): Promise<boolea
 
 export async function runInit(args: string[]): Promise<void> {
   const opts = parseArgs(args)
-  const apiKey = await getApiKey(opts.all)
+  const apiKey = await getApiKey()
   const detected = await detectClients(opts.clients)
 
   if (detected.length === 0) {
