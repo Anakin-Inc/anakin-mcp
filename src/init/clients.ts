@@ -33,8 +33,21 @@ export interface AnakinServerEntry {
   env: { ANAKIN_API_KEY: string }
 }
 
+export interface AnakinServerEntryV2 extends AnakinServerEntry {
+  type: 'stdio'
+}
+
 export function buildAnakinEntry(apiKey: string): AnakinServerEntry {
   return {
+    command: 'npx',
+    args: ['-y', '@anakin-io/mcp'],
+    env: { ANAKIN_API_KEY: apiKey },
+  }
+}
+
+export function buildAnakinEntryV2(apiKey: string): AnakinServerEntryV2 {
+  return {
+    type: 'stdio',
     command: 'npx',
     args: ['-y', '@anakin-io/mcp'],
     env: { ANAKIN_API_KEY: apiKey },
@@ -66,7 +79,6 @@ async function writeJson(file: string, config: JsonConfig): Promise<void> {
 function objectStyleKey(client: ClientName): string | null {
   switch (client) {
     case 'claude-desktop':
-    case 'claude-code':
     case 'cursor':
     case 'cline':
     case 'windsurf':
@@ -76,7 +88,33 @@ function objectStyleKey(client: ClientName): string | null {
     case 'zed':
       return 'context_servers'
     case 'continue':
-      return null // array form — handled separately
+    case 'claude-code':
+      return null // handled separately
+  }
+}
+
+/**
+ * Claude Code v2+: MCPs live at projects[cwd].mcpServers in ~/.claude.json.
+ * The entry includes type:"stdio" to match what `claude mcp add` writes.
+ */
+function mergeClaudeCode(config: JsonConfig, apiKey: string): JsonConfig {
+  const cwd = process.cwd()
+  const projects = (config['projects'] ?? {}) as JsonConfig
+  const project = (projects[cwd] ?? {}) as JsonConfig
+  const mcpServers = (project['mcpServers'] ?? {}) as JsonConfig
+
+  return {
+    ...config,
+    projects: {
+      ...projects,
+      [cwd]: {
+        ...project,
+        mcpServers: {
+          ...mcpServers,
+          anakin: buildAnakinEntryV2(apiKey),
+        },
+      },
+    },
   }
 }
 
@@ -132,10 +170,10 @@ function mergeServerEntry(
   client: ClientName,
   config: JsonConfig,
   entry: AnakinServerEntry,
+  apiKey: string,
 ): JsonConfig {
-  if (client === 'continue') {
-    return mergeContinue(config, entry)
-  }
+  if (client === 'continue') return mergeContinue(config, entry)
+  if (client === 'claude-code') return mergeClaudeCode(config, apiKey)
   const key = objectStyleKey(client)
   if (key === null) {
     throw new Error(`No merge strategy defined for client: ${client}`)
@@ -154,7 +192,7 @@ export async function writeClientConfig(
 ): Promise<boolean> {
   const entry = buildAnakinEntry(apiKey)
   const existing = await readJson(configFilePath)
-  const updated = mergeServerEntry(client, existing, entry)
+  const updated = mergeServerEntry(client, existing, entry, apiKey)
 
   // No-op if already set to the same shape.
   if (JSON.stringify(existing) === JSON.stringify(updated)) {

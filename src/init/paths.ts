@@ -92,9 +92,9 @@ export function configPath(client: ClientName): string | null {
       return null
 
     case 'claude-code':
-      // Anthropic's CLI agent — settings live under ~/.claude regardless
-      // of platform. Cross-platform identical, including Linux.
-      return path.join(home, '.claude', 'settings.json')
+      // Claude Code v2+ stores all config in ~/.claude.json (home dir).
+      // MCPs live at projects[cwd].mcpServers — handled in clients.ts.
+      return path.join(home, '.claude.json')
 
     case 'cursor':
       return path.join(home, '.cursor', 'mcp.json')
