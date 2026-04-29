@@ -3,7 +3,7 @@
  *
  *   anakin-mcp                — run the MCP server (default; what client tools spawn)
  *   anakin-mcp init           — interactively configure MCP for detected agent clients
- *   anakin-mcp init --all     — non-interactive; configure every detected client
+ *   anakin-mcp init --all     — skip per-client confirmations; prompts for API key if unset
  *   anakin-mcp init --client=<name>  — only configure one client
  *   anakin-mcp --version      — print version
  *   anakin-mcp --help         — print usage
@@ -22,8 +22,9 @@ Usage:
                                    agent clients (Claude Desktop, Claude Code,
                                    Cursor, Cline, Continue, Zed, Windsurf,
                                    VS Code).
-  anakin-mcp init --all            Configure every detected client without
-                                   prompts.
+  anakin-mcp init --all            Configure every detected client, skip
+                                   per-client confirmations. Prompts for
+                                   API key if ANAKIN_API_KEY is not set.
   anakin-mcp init --client=<name>  Only configure one client.
                                    Names: claude-desktop, claude-code, cursor,
                                    cline, continue, zed, windsurf, vscode.
@@ -31,11 +32,11 @@ Usage:
   anakin-mcp --help                Print this help and exit.
 
 Environment:
-  ANAKIN_API_KEY   Required when the server is running. Get a key at
-                   https://anakin.io/dashboard.
+  ANAKIN_API_KEY   API key for the Anakin API. If not set, init prompts
+                   for it. Get a key at https://anakin.io/dashboard.
 
 Docs:
-  https://anakin.io/docs/integrations/ide-plugins/mcp-server
+  https://anakin.io/docs/integrations/ai-agents/mcp-server
 `
 
 async function main(): Promise<void> {
