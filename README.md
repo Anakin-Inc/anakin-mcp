@@ -20,7 +20,7 @@ npx -y @anakin-io/mcp init --all
 
 You'll be prompted for your API key (or set `ANAKIN_API_KEY` first to skip the prompt). Get one free at [anakin.io/dashboard](https://anakin.io/dashboard) — 500 credits, no card required.
 
-After it finishes, **restart your agent client(s)**. The `anakin` MCP server will appear in the tool list, exposing six tools (see below).
+After it finishes, **restart your agent client(s)**. The `anakin` MCP server will appear in the tool list, exposing the tools below.
 
 ## Manual install
 
@@ -35,7 +35,19 @@ If you prefer to edit config files yourself, see [Manual setup per client](#manu
 | `map` | Discover all URLs on a domain. |
 | `crawl` | Bulk-fetch markdown across a site. |
 | `agentic_search` | Multi-source deep research (1–5 min). |
-| `wire_action` | Execute pre-built website actions (login flows, form fills, etc.). |
+| `wire_discover` | Find a Wire action for a task by natural-language intent. |
+| `wire_catalog` | Browse supported sites and a site's actions + param schemas. |
+| `wire_action` | Run a pre-built Wire action (read **or** write) and get its result. |
+| `wire_identities` | List saved accounts/credentials for auth-required actions. |
+| `wire_login` | Sign in to a credentials-mode site → `credential_id`. |
+| `wire_build` | Request a brand-new action for a site not yet in the catalog. |
+
+**Wire** runs pre-built automation actions across hundreds of sites. Actions are
+**read** (extract listings, category products, prices, reviews, profiles,
+dashboard metrics) or **write** (log in, checkout, submit a form) — many read
+actions need no auth. The loop is: `wire_discover` (or `wire_catalog`) to find an
+`action_id`, then `wire_action` to run it; add a `credential_id` only when the
+action's auth mode is `required`.
 
 Each tool is a thin wrapper around the Anakin REST API — there is no scraping logic in this package, just MCP-protocol glue. The HTTP client is self-contained (`src/client.ts`); no runtime dependency on the [`@anakin-io/sdk`](https://github.com/Anakin-Inc/anakin-node) Node SDK.
 

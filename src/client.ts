@@ -59,12 +59,39 @@ export interface AgenticSearchOptions {
 export class AnakinError extends Error {
   status: number | undefined
   code: string | undefined
-  constructor(message: string, status?: number, code?: string) {
+  /**
+   * Extra fields from a structured error body (Wire's nested envelope), e.g.
+   * `connect_url` on AUTH_REQUIRED or `balance`/`required` on
+   * INSUFFICIENT_CREDITS. Empty for the legacy flat error shape.
+   */
+  details: Record<string, unknown> | undefined
+  constructor(
+    message: string,
+    status?: number,
+    code?: string,
+    details?: Record<string, unknown>,
+  ) {
     super(message)
     this.name = 'AnakinError'
     this.status = status
     this.code = code
+    this.details = details
   }
+}
+
+/** Append a query string, dropping undefined/empty values. */
+function withQuery(
+  path: string,
+  params: Record<string, string | number | undefined>,
+): string {
+  const entries = Object.entries(params).filter(
+    ([, v]) => v !== undefined && v !== '',
+  )
+  if (entries.length === 0) return path
+  const q = entries
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+    .join('&')
+  return `${path}?${q}`
 }
 
 export class AnakinClient {
@@ -97,19 +124,43 @@ export class AnakinClient {
     const resp = await fetch(this.baseUrl + path, init)
 
     if (!resp.ok) {
-      let message = `${method} ${path} failed (${resp.status})`
-      let code: string | undefined
-      try {
-        const errBody = (await resp.json()) as { error?: string; code?: string }
-        if (errBody.error) message = errBody.error
-        if (errBody.code) code = errBody.code
-      } catch {
-        // Body wasn't JSON; keep the generic message.
-      }
-      throw new AnakinError(message, resp.status, code)
+      throw await this.toError(method, path, resp)
     }
 
     return (await resp.json()) as T
+  }
+
+  /**
+   * Normalize an error response into an AnakinError. Handles two shapes:
+   *  - Wire's nested envelope: `{ status: "error", error: { code, message, … } }`
+   *  - the legacy flat shape:  `{ error: "msg", code: "CODE" }`
+   */
+  private async toError(
+    method: string,
+    path: string,
+    resp: Response,
+  ): Promise<AnakinError> {
+    let message = `${method} ${path} failed (${resp.status})`
+    let code: string | undefined
+    let details: Record<string, unknown> | undefined
+    try {
+      const body = (await resp.json()) as Record<string, unknown>
+      const err = body['error']
+      if (err && typeof err === 'object') {
+        // Wire nested envelope.
+        const e = err as Record<string, unknown>
+        if (typeof e['message'] === 'string') message = e['message']
+        if (typeof e['code'] === 'string') code = e['code']
+        details = e
+      } else if (typeof err === 'string') {
+        // Legacy flat envelope.
+        message = err
+        if (typeof body['code'] === 'string') code = body['code']
+      }
+    } catch {
+      // Body wasn't JSON; keep the generic message.
+    }
+    return new AnakinError(message, resp.status, code, details)
   }
 
   private async pollJob<T extends { status?: string; error?: string }>(
@@ -199,12 +250,91 @@ export class AnakinClient {
     return await this.pollJob<AgenticSearchResult>(`/agentic-search/${submitted.jobId}`)
   }
 
-  async wire(actionId: string, params: Record<string, unknown>): Promise<WireResult> {
-    const submitted = await this.request<{ jobId: string }>('POST', '/holocron/task', {
-      action_id: actionId,
-      params,
-    })
-    return await this.pollJob<WireResult>(`/holocron/jobs/${submitted.jobId}`)
+  // ── Wire: discovery ───────────────────────────────────────────────────
+
+  /** Natural-language intent → ranked candidate actions. */
+  async wireResolve(q: string, limit?: number): Promise<WireResolveResponse> {
+    return await this.request<WireResolveResponse>(
+      'GET',
+      withQuery('/wire/resolve', { q, limit }),
+    )
+  }
+
+  /** List every catalog, or one catalog's full action list with param schemas. */
+  async wireCatalog(slug?: string): Promise<unknown> {
+    const path = slug
+      ? `/wire/catalog/${encodeURIComponent(slug)}`
+      : '/wire/catalog'
+    return await this.request<unknown>('GET', path)
+  }
+
+  // ── Wire: execution ───────────────────────────────────────────────────
+
+  /**
+   * Submit a task and poll the job to a terminal state. `params` is omitted
+   * from the body when empty (some actions take none). Sync actions that
+   * return data inline (no `job_id`) are returned directly without polling.
+   */
+  async wireRun(
+    actionId: string,
+    params: Record<string, unknown>,
+    options: WireRunOptions = {},
+  ): Promise<WireJobStatus> {
+    const body: Record<string, unknown> = { action_id: actionId }
+    if (params && Object.keys(params).length > 0) body['params'] = params
+    if (options.credentialId !== undefined) body['credential_id'] = options.credentialId
+    if (options.identityId !== undefined) body['identity_id'] = options.identityId
+
+    const accepted = await this.request<WireTaskAccepted>('POST', '/wire/task', body)
+    if (!accepted.job_id) {
+      // Sync action: terminal data came back inline.
+      return accepted as unknown as WireJobStatus
+    }
+    return await this.pollWireJob(accepted.job_id)
+  }
+
+  private async pollWireJob(jobId: string): Promise<WireJobStatus> {
+    const path = `/wire/jobs/${jobId}`
+    for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
+      const job = await this.request<WireJobStatus>('GET', path)
+      if (job.status === 'completed') return job
+      if (job.status === 'failed') {
+        const reason = job.error?.message ?? job.error?.code ?? 'unknown'
+        throw new AnakinError(
+          `Wire job failed: ${reason}`,
+          undefined,
+          job.error?.code,
+          job.error as Record<string, unknown> | undefined,
+        )
+      }
+      // Respect the server's pacing hint when present; clamp to a sane range.
+      const wait =
+        typeof job.retry_after_ms === 'number' ? job.retry_after_ms : POLL_INTERVAL_MS
+      await new Promise((r) => setTimeout(r, Math.min(Math.max(wait, 500), 10_000)))
+    }
+    throw new AnakinError('Wire job timed out after polling')
+  }
+
+  // ── Wire: identities & credentials ────────────────────────────────────
+
+  /** List your identities (and their credentials inline). */
+  async wireIdentities(catalogId?: string): Promise<unknown> {
+    return await this.request<unknown>(
+      'GET',
+      withQuery('/wire/identities', { catalog_id: catalogId }),
+    )
+  }
+
+  /** Credentials-mode sign-in → a credential_id ready for wireRun. */
+  async wireLogin(body: WireLoginRequest): Promise<unknown> {
+    return await this.request<unknown>('POST', '/wire/login', body)
+  }
+
+  // ── Wire: build ───────────────────────────────────────────────────────
+
+  /** Request a brand-new action for a site not yet in the catalog. */
+  async wireBuild(body: WireBuildRequest): Promise<unknown> {
+    return await this.request<unknown>('POST', '/wire/build-request', body)
   }
 }
 
@@ -282,10 +412,62 @@ export interface AgenticSearchResult {
   error?: string
 }
 
-export interface WireResult {
-  id: string
-  status: 'completed' | 'failed'
-  actionId: string
-  result?: Record<string, unknown>
-  error?: string
+// ── Wire ────────────────────────────────────────────────────────────────
+
+export interface WireRunOptions {
+  /** Required when the action's auth_mode is `required`; honored when `optional`. */
+  credentialId?: string
+  /** Optional identity selector (server resolves a credential from it). */
+  identityId?: string
+}
+
+export interface WireTaskAccepted {
+  status?: string
+  job_id?: string
+  poll_url?: string
+}
+
+export interface WireJobError {
+  code?: string
+  message?: string
+  details?: string
+  /** Present on AUTH_REQUIRED — where to connect the account. */
+  connect_url?: string
+  [key: string]: unknown
+}
+
+export interface WireJobStatus {
+  status: 'processing' | 'completed' | 'failed'
+  /** Present while processing — server's suggested poll delay. */
+  retry_after_ms?: number
+  /** Present when completed — the action's extracted/returned data. */
+  data?: Record<string, unknown>
+  credits_used?: number
+  execution_ms?: number
+  /** Present when failed. */
+  error?: WireJobError
+  [key: string]: unknown
+}
+
+export interface WireResolveResponse {
+  results?: Array<Record<string, unknown>>
+  /** Suggested next call. */
+  next?: string
+}
+
+export interface WireLoginRequest {
+  catalog_slug: string
+  identity_name?: string
+  /** Wheel-defined login fields (e.g. email/password). */
+  params?: Record<string, unknown>
+  source_id?: string
+  source_ref?: Record<string, unknown>
+}
+
+export interface WireBuildRequest {
+  website_url: string
+  goal: string
+  catalog_id?: string
+  visibility?: 'private' | 'public'
+  force?: boolean
 }

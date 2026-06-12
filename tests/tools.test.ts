@@ -23,12 +23,17 @@ const EXPECTED_TOOL_NAMES = [
   'map',
   'crawl',
   'agentic_search',
+  'wire_discover',
+  'wire_catalog',
   'wire_action',
+  'wire_identities',
+  'wire_login',
+  'wire_build',
 ] as const
 
 describe('tools registry', () => {
-  it('exposes exactly the 6 expected tools', () => {
-    expect(tools).toHaveLength(6)
+  it('exposes exactly the expected tools', () => {
+    expect(tools).toHaveLength(EXPECTED_TOOL_NAMES.length)
     expect(tools.map((t) => t.name)).toEqual([...EXPECTED_TOOL_NAMES])
   })
 
@@ -81,10 +86,22 @@ describe('per-tool input schema spot checks', () => {
     expect(schema.required).toContain('prompt')
   })
 
-  it('wire_action requires action_id and params', () => {
+  it('wire_action requires action_id (params optional — some actions take none)', () => {
     const wire = tools.find((t) => t.name === 'wire_action')!
     const schema = wire.inputSchema as { required?: string[] }
-    expect(schema.required).toEqual(expect.arrayContaining(['action_id', 'params']))
+    expect(schema.required).toEqual(['action_id'])
+  })
+
+  it('wire_discover requires q', () => {
+    const discover = tools.find((t) => t.name === 'wire_discover')!
+    const schema = discover.inputSchema as { required?: string[] }
+    expect(schema.required).toContain('q')
+  })
+
+  it('wire_build requires website_url and goal', () => {
+    const build = tools.find((t) => t.name === 'wire_build')!
+    const schema = build.inputSchema as { required?: string[] }
+    expect(schema.required).toEqual(expect.arrayContaining(['website_url', 'goal']))
   })
 })
 

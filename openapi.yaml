@@ -1,0 +1,1469 @@
+openapi: 3.1.0
+info:
+  title: Anakin Wire API
+  version: "1.0.0"
+  description: |
+    Wire runs pre-built automation actions ("scrapers") across hundreds of
+    popular websites. Each action handles browser rendering, authentication, and
+    structured data extraction. Most actions are **asynchronous** — submit a task
+    and poll for results.
+
+    ## The core loop
+    1. **Discover** — `GET /resolve?q=<intent>` (agent-shaped) or `GET /search` /
+       `GET /catalog` to find an `action_id` and its parameter schema.
+    2. **Submit** — `POST /task` with the `action_id` and `params` → `{ job_id }`.
+    3. **Poll** — `GET /jobs/{id}` until `status` is `completed` or `failed`
+       (respect `retry_after_ms`).
+
+    ## Authentication
+    All endpoints accept an API key via the `X-API-Key` header. Discovery
+    endpoints (`/resolve`, `/search`, `/catalog`, `/catalog/{slug}`) also work
+    unauthenticated, but return richer, personalized data when a key is supplied
+    (your private actions, and `auth_satisfied`/`connected` flags).
+
+    ## Auth for actions that require login
+    Actions whose `auth_mode` is `required` need a `credential_id`. Get one by:
+    - `POST /login` — find-or-create an identity and sign in (password **or**
+      a 1Password vault item) in a single call, or
+    - the interactive **connect** flow (`POST /connect/{slug}/start` →
+      `/finish`) for cookie-based ("browser_state") catalogs.
+
+    List your credentials any time with `GET /identities`.
+
+    ## Meta endpoints (served at the host root, not under /v1/wire)
+    - `GET https://api.openwire.sh/health` — liveness.
+    - `GET https://api.openwire.sh/llms.txt` — one-screen agent orientation.
+
+    ## Internal endpoints
+    Routes under `/v1/wire/internal/*` (publish, complete, request-status,
+    breakers, config, test-task) are shared-secret **builder/admin** routes and
+    are intentionally omitted from this consumer-facing spec.
+  contact:
+    name: Anakin Wire
+    url: https://openwire.sh
+
+servers:
+  - url: https://api.openwire.sh/v1/wire
+    description: Production (canonical)
+  - url: https://api.anakin.io/v1/wire
+    description: Production (alias host)
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: Discovery
+    description: Find catalogs and actions. Optional auth.
+  - name: Tasks
+    description: Execute actions and retrieve job results.
+  - name: Identities
+    description: Named accounts on a catalog and their credentials.
+  - name: Credentials
+    description: Sign in / refresh the auth used to run authenticated actions.
+  - name: Identity Sources
+    description: External credential providers (1Password today).
+  - name: Connections
+    description: Interactive browser-session login flow (cookie-based catalogs).
+  - name: Build
+    description: Request brand-new actions for sites not yet in the catalog.
+
+paths:
+  # ───────────────────────────── Discovery ─────────────────────────────
+  /resolve:
+    get:
+      tags: [Discovery]
+      summary: Resolve intent → ranked actions
+      description: |
+        Natural-language intent → a terse, ranked list of candidate actions
+        (agent-shaped: params split into `required`/`optional`, descriptions
+        stripped). The fastest path from "what I want to do" to an `action_id`.
+      operationId: resolveActions
+      security:
+        - {}
+        - ApiKeyAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+          description: Free-text intent, e.g. "search airbnb listings in Lisbon".
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 5, minimum: 1 }
+      responses:
+        "200":
+          description: Ranked actions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: "#/components/schemas/ResolveResult" }
+                  next:
+                    type: string
+                    description: Suggested next call.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /search:
+    get:
+      tags: [Discovery]
+      summary: Search actions
+      description: Find actions across every catalog by query, catalog, or category.
+      operationId: searchActions
+      security:
+        - {}
+        - ApiKeyAuth: []
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+          description: Matches action name, description, and tags.
+        - name: catalog
+          in: query
+          schema: { type: string }
+          description: Restrict to a catalog slug.
+        - name: category
+          in: query
+          schema: { type: string }
+          description: Restrict to a catalog category (e.g. `travel`, `commerce`).
+        - name: auth
+          in: query
+          schema: { type: string, enum: ["true", "false"] }
+          description: "Legacy. `false` excludes auth-required actions. Superseded by `auth_mode`."
+        - name: auth_mode
+          in: query
+          schema: { type: string, enum: [none, optional, required] }
+          description: Filter by auth mode. Takes precedence over `auth`.
+      responses:
+        "200":
+          description: Matching actions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: "#/components/schemas/SearchResult" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /catalog:
+    get:
+      tags: [Discovery]
+      summary: List catalogs
+      description: Every website with at least one visible action.
+      operationId: listCatalogs
+      security:
+        - {}
+        - ApiKeyAuth: []
+      parameters:
+        - name: scope
+          in: query
+          schema: { type: string, enum: [my, global] }
+          description: "`my` = only catalogs containing actions you own; `global` = public-only. Default: all visible."
+      responses:
+        "200":
+          description: Catalog list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  catalog:
+                    type: array
+                    items: { $ref: "#/components/schemas/CatalogEntry" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /catalog/{slug}:
+    get:
+      tags: [Discovery]
+      summary: Catalog details + actions
+      description: |
+        One catalog plus every visible action it exposes (with parameter
+        schemas), and `login_input_schema` for credentials-mode catalogs.
+      operationId: getCatalog
+      security:
+        - {}
+        - ApiKeyAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+          description: Catalog slug, e.g. `airbnb`.
+      responses:
+        "200":
+          description: Catalog detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  catalog: { $ref: "#/components/schemas/CatalogEntry" }
+                  actions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Action" }
+                  login_input_schema:
+                    type: array
+                    description: Login fields for credentials-mode catalogs; empty otherwise.
+                    items: { $ref: "#/components/schemas/ActionParam" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  # ───────────────────────────── Tasks ─────────────────────────────
+  /task:
+    post:
+      tags: [Tasks]
+      summary: Execute a task
+      description: |
+        Run a pre-built action. Credits are deducted at submission and refunded
+        automatically if the job fails. Returns a `job_id` to poll. `credential_id`
+        is mandatory when the action's `auth_mode` is `required`.
+      operationId: executeTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskRequest" }
+            examples:
+              authenticated:
+                value:
+                  action_id: li_profile_scrape
+                  credential_id: 11111111-2222-3333-4444-555555555555
+                  params: { profile_url: "https://www.linkedin.com/in/example" }
+              anonymous:
+                value:
+                  action_id: ab_search_listings
+                  params: { query: "pacific heights", adults: 2 }
+      responses:
+        "202":
+          description: Task accepted; poll the job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskAccepted" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/AuthError" }
+        "402": { $ref: "#/components/responses/InsufficientCredits" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /jobs:
+    get:
+      tags: [Tasks]
+      summary: List jobs
+      description: Recent jobs for the current user, with filters and pagination.
+      operationId: listJobs
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: catalog, in: query, schema: { type: string }, description: Filter by catalog slug. }
+        - { name: status, in: query, schema: { type: string, enum: [processing, completed, failed] } }
+        - { name: search, in: query, schema: { type: string }, description: Free-text match on action/params. }
+      responses:
+        "200":
+          description: Paginated jobs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs:
+                    type: array
+                    items: { $ref: "#/components/schemas/Job" }
+                  total_count: { type: integer }
+                  page: { type: integer }
+                  limit: { type: integer }
+                  total_pages: { type: integer }
+                  stats:
+                    type: object
+                    description: Aggregate counts (returned on page 1 only).
+                    additionalProperties: true
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /jobs/{id}:
+    get:
+      tags: [Tasks]
+      summary: Get job status / results
+      description: Poll until `status` is `completed` or `failed`.
+      operationId: getJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Job state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobStatus" }
+              examples:
+                processing:
+                  value: { status: processing, retry_after_ms: 2000 }
+                completed:
+                  value:
+                    status: completed
+                    data: { name: "Jane Doe", headline: "Engineer at Acme" }
+                    credits_used: 2
+                    execution_ms: 8420
+                failed:
+                  value:
+                    status: failed
+                    error: { code: EXECUTION_FAILED, message: "The target page could not be loaded." }
+                    credits_used: 0
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /jobs/{id}/download:
+    get:
+      tags: [Tasks]
+      summary: Download job result file
+      description: Streams the result artifact directly from storage.
+      operationId: downloadJobResult
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Result file stream.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400":
+          description: No downloadable result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  # ───────────────────────────── Identities ─────────────────────────────
+  /identities:
+    get:
+      tags: [Identities]
+      summary: List identities
+      description: Your identities with their credentials inline. Copy `credentials[].id` to use as `credential_id`.
+      operationId: listIdentities
+      parameters:
+        - name: catalog_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: Filter to a single catalog.
+      responses:
+        "200":
+          description: Identities.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  identities:
+                    type: array
+                    items: { $ref: "#/components/schemas/Identity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    post:
+      tags: [Identities]
+      summary: Create identity (optionally verify-and-create a credential)
+      description: |
+        Identity-only insert, or atomic verify-and-create when a `credential`
+        block is supplied (runs the login wheel and only persists on success).
+      operationId: createIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateIdentityRequest" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  identity: { $ref: "#/components/schemas/Identity" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: An identity with that name already exists for the catalog.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /identities/{id}:
+    get:
+      tags: [Identities]
+      summary: Get one identity
+      operationId: getIdentity
+      parameters: [ { $ref: "#/components/parameters/IdentityId" } ]
+      responses:
+        "200":
+          description: Identity.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  identity: { $ref: "#/components/schemas/Identity" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Identities]
+      summary: Update identity
+      description: Rename and/or set as default for its catalog.
+      operationId: updateIdentity
+      parameters: [ { $ref: "#/components/parameters/IdentityId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, description: Optional; empty preserves the current name. }
+                is_default: { type: boolean }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Identities]
+      summary: Delete identity
+      operationId: deleteIdentity
+      parameters: [ { $ref: "#/components/parameters/IdentityId" } ]
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /identities/{id}/credentials:
+    get:
+      tags: [Credentials]
+      summary: List an identity's credentials
+      operationId: listCredentials
+      parameters: [ { $ref: "#/components/parameters/IdentityId" } ]
+      responses:
+        "200":
+          description: Credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  credentials:
+                    type: array
+                    items: { $ref: "#/components/schemas/IdentityCredential" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Credentials]
+      summary: Add a credential to an identity
+      description: "`credentials` (runs the login wheel) or `api_key`/`token` (stored as-is). `browser_state` is created via the connect flow."
+      operationId: createCredential
+      parameters: [ { $ref: "#/components/parameters/IdentityId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential_type, data]
+              properties:
+                credential_type: { type: string, enum: [credentials, api_key, token] }
+                data:
+                  type: object
+                  description: Login fields for `credentials`; the static secret for `api_key`/`token`.
+                  additionalProperties: true
+                metadata:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  credential: { $ref: "#/components/schemas/IdentityCredential" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /credentials/{id}:
+    delete:
+      tags: [Credentials]
+      summary: Delete a credential
+      operationId: deleteCredential
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /credentials/verify:
+    post:
+      tags: [Credentials]
+      summary: Re-verify / refresh a credential
+      description: |
+        Re-runs the catalog's login wheel for an existing identity and refreshes
+        the stored session cookies in place. For a 1Password-sourced credential
+        omit `params`; for a manual credential supply the login `params`.
+      operationId: verifyCredential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identity_id]
+              properties:
+                identity_id: { type: string, format: uuid }
+                params:
+                  type: object
+                  description: Login fields. Omit/`{}` for 1Password-sourced; required for manual credentials.
+                  additionalProperties: true
+      responses:
+        "201":
+          description: Verified (treat any `status != "verified"` as failure, even on HTTP 200).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: verified }
+                  credential: { $ref: "#/components/schemas/IdentityCredential" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/UpstreamError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /login:
+    post:
+      tags: [Credentials]
+      summary: Create identity / login
+      description: |
+        Find-or-create an identity and sign in, returning a `credential_id` usable
+        immediately with `POST /task`. Supply the login two ways (mutually
+        exclusive): classic `params` (username/password) or a 1Password
+        `source_id` + `source_ref` locator (`identity_name` then required).
+        The password is never stored — only the issued cookies, encrypted.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+            examples:
+              password:
+                value:
+                  catalog_slug: neb
+                  params: { email: "alice@example.com", password: "..." }
+              onepassword:
+                value:
+                  catalog_slug: neb
+                  identity_name: work-account
+                  source_id: f1e2d3c4-0000-0000-0000-000000000000
+                  source_ref: { vault_id: abcd1234, item_id: wxyz5678, fields: [username, password] }
+      responses:
+        "201":
+          description: Verified (treat any `status != "verified"` as failure, even on HTTP 200).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginSuccess" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The named identity is already bound to a different source/credential.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "502": { $ref: "#/components/responses/UpstreamError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  # ───────────────────────────── Identity Sources ─────────────────────────────
+  /identity-sources:
+    get:
+      tags: [Identity Sources]
+      summary: List connected identity sources
+      operationId: listIdentitySources
+      parameters:
+        - { name: provider, in: query, schema: { type: string }, description: "e.g. `1password`." }
+        - { name: status, in: query, schema: { type: string, enum: [pending, active, revoked, expired] } }
+      responses:
+        "200":
+          description: Sources.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  identity_sources:
+                    type: array
+                    items: { $ref: "#/components/schemas/IdentitySource" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    post:
+      tags: [Identity Sources]
+      summary: Connect an identity source
+      description: "For `1password`, `token` is a Service Account token (starts `ops_`). The token is verified against the provider before the row is persisted."
+      operationId: createIdentitySource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, display_name]
+              properties:
+                provider: { type: string, example: "1password" }
+                display_name: { type: string }
+                token: { type: string, description: "Provider access token (1Password SA token, etc.)." }
+      responses:
+        "201":
+          description: Connected.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  identity_source: { $ref: "#/components/schemas/IdentitySource" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /identity-sources/providers:
+    get:
+      tags: [Identity Sources]
+      summary: List supported providers
+      operationId: listProviders
+      responses:
+        "200":
+          description: Providers this engine supports.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  providers:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /identity-sources/{id}:
+    get:
+      tags: [Identity Sources]
+      summary: Get one identity source
+      operationId: getIdentitySource
+      parameters: [ { $ref: "#/components/parameters/SourceId" } ]
+      responses:
+        "200":
+          description: Source.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  identity_source: { $ref: "#/components/schemas/IdentitySource" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Identity Sources]
+      summary: Rename or rotate token
+      description: Supply `display_name` and/or a new `token`. A new token is verified before it replaces the working one.
+      operationId: updateIdentitySource
+      parameters: [ { $ref: "#/components/parameters/SourceId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string }
+                token: { type: string }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  identity_source: { $ref: "#/components/schemas/IdentitySource" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Identity Sources]
+      summary: Disconnect a source
+      description: Detaches the source. Pass `delete_identities=true` to also delete the identities sourced from it.
+      operationId: deleteIdentitySource
+      parameters:
+        - { $ref: "#/components/parameters/SourceId" }
+        - name: delete_identities
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /identity-sources/{id}/verify:
+    post:
+      tags: [Identity Sources]
+      summary: Verify a source
+      description: Re-checks the stored token against the provider and refreshes scope metadata.
+      operationId: verifyIdentitySource
+      parameters: [ { $ref: "#/components/parameters/SourceId" } ]
+      responses:
+        "200":
+          description: Verified.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  identity_source: { $ref: "#/components/schemas/IdentitySource" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /identity-sources/{id}/identities:
+    get:
+      tags: [Identity Sources]
+      summary: List identities sourced from a connection
+      operationId: listSourceIdentities
+      parameters: [ { $ref: "#/components/parameters/SourceId" } ]
+      responses:
+        "200":
+          description: Identities, joined with their catalogs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  identities:
+                    type: array
+                    items: { $ref: "#/components/schemas/SourceIdentity" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /identity-sources/{id}/1password/vaults:
+    get:
+      tags: [Identity Sources]
+      summary: List 1Password vaults
+      description: Live call to 1Password using the source's stored token. Use a vault `id` to browse its items.
+      operationId: listSourceVaults
+      parameters: [ { $ref: "#/components/parameters/SourceId" } ]
+      responses:
+        "200":
+          description: Vaults.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  vaults:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/UpstreamError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /identity-sources/{id}/1password/vaults/{vault_id}/items:
+    get:
+      tags: [Identity Sources]
+      summary: List 1Password vault items
+      description: "Live call to 1Password. Use an item `id` as `source_ref.item_id` in `POST /login`. Capped at 200 items; filter with `domain`."
+      operationId: listSourceItems
+      parameters:
+        - { $ref: "#/components/parameters/SourceId" }
+        - name: vault_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: domain
+          in: query
+          schema: { type: string }
+          description: Case-insensitive substring filter on title or any item URL.
+      responses:
+        "200":
+          description: Login items.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        title: { type: string }
+                        category: { type: string }
+                        urls:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              href: { type: string }
+                              label: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/UpstreamError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  # ───────────────────────────── Connections ─────────────────────────────
+  /connections:
+    get:
+      tags: [Connections]
+      summary: List browser connections
+      operationId: listConnections
+      responses:
+        "200":
+          description: Connections.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connections:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /connect/{slug}/start:
+    post:
+      tags: [Connections]
+      summary: Start an interactive browser login
+      description: Spins up a remote browser session (noVNC) so the user can sign in. Returns session info to open the viewer.
+      operationId: startConnection
+      parameters: [ { $ref: "#/components/parameters/CatalogSlug" } ]
+      responses:
+        "200":
+          description: Session created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  catalog: { $ref: "#/components/schemas/CatalogEntry" }
+                  session:
+                    type: object
+                    additionalProperties: true
+                  login_url: { type: string }
+                  catalog_slug: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A browser session is already active for this user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "502": { $ref: "#/components/responses/UpstreamError" }
+
+  /connect/{slug}/finish:
+    post:
+      tags: [Connections]
+      summary: Finish a browser login (persist cookies)
+      description: Saves the session's cookies/storage as an encrypted `browser_state` credential, linked to a new or existing identity.
+      operationId: finishConnection
+      parameters: [ { $ref: "#/components/parameters/CatalogSlug" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id]
+              properties:
+                session_id: { type: string }
+                website_url: { type: string }
+                identity_id: { type: string, format: uuid, description: Link to an existing identity. }
+                identity_name: { type: string, description: Create a new identity if `identity_id` is omitted. }
+      responses:
+        "200":
+          description: Cookies saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/UpstreamError" }
+
+  /connect/{slug}:
+    delete:
+      tags: [Connections]
+      summary: Remove a connection
+      operationId: deleteConnection
+      parameters: [ { $ref: "#/components/parameters/CatalogSlug" } ]
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /connect/cancel/{session_id}:
+    delete:
+      tags: [Connections]
+      summary: Cancel an in-progress browser session
+      operationId: cancelConnection
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ───────────────────────────── Build ─────────────────────────────
+  /build-request:
+    post:
+      tags: [Build]
+      summary: Request a new action
+      description: |
+        Generate a brand-new action for a site not yet in the catalog. Async —
+        returns `status: "pending"`. Credits charged on submission, refunded if
+        the build fails. No per-minute limit; bounded to 3 pending builds.
+      operationId: createBuildRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [website_url, goal]
+              properties:
+                website_url: { type: string, description: Domain extracted automatically (leading `www.` stripped). }
+                goal: { type: string, description: Natural-language description of what the action should do/extract. }
+                catalog_id: { type: string, format: uuid, description: Attach to an existing catalog instead of creating one. }
+                visibility: { type: string, enum: [private, public], default: private }
+                force: { type: boolean, default: false, description: Build even if similar actions exist (else `409 ACTION_EXISTS`). }
+      responses:
+        "201":
+          description: Build request created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  build_request: { $ref: "#/components/schemas/BuildRequest" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "402": { $ref: "#/components/responses/InsufficientCredits" }
+        "409":
+          description: "Similar actions already exist (set `force: true`)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "429":
+          description: Too many pending builds (max 3).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /build-requests:
+    get:
+      tags: [Build]
+      summary: List build requests
+      operationId: listBuildRequests
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        "200":
+          description: Build requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  build_requests:
+                    type: array
+                    items: { $ref: "#/components/schemas/BuildRequest" }
+                  pagination:
+                    type: object
+                    properties:
+                      page: { type: integer }
+                      limit: { type: integer }
+                      total: { type: integer }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key issued from the dashboard. Several header aliases are also accepted (Authorization, Api-Key, api_key, …).
+
+  parameters:
+    IdentityId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Identity ID.
+    SourceId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Identity source ID.
+    CatalogSlug:
+      name: slug
+      in: path
+      required: true
+      schema: { type: string }
+      description: Catalog slug.
+
+  responses:
+    Ok:
+      description: Success.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status: { type: string, example: ok }
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: Not found (or not owned by you).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Forbidden:
+      description: The resource belongs to another user (or wrong catalog).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    AuthError:
+      description: "`AUTH_REQUIRED` (no credential — see `connect_url`) or `AUTH_EXPIRED` (re-login)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    InsufficientCredits:
+      description: Balance can't cover the credit cost.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    RateLimited:
+      description: Rate limit exceeded.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    ServerError:
+      description: Server error. For `POST /task`, `EXECUTION_FAILED` here means the engine couldn't enqueue — credits are not deducted; retry.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unavailable:
+      description: Action or capability not available (e.g. `ACTION_UNAVAILABLE`, login mode not configured).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    UpstreamError:
+      description: Could not reach an upstream dependency (provider / wheel runner).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  schemas:
+    ErrorEnvelope:
+      type: object
+      properties:
+        status: { type: string, example: error }
+        error: { $ref: "#/components/schemas/Error" }
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+          description: |
+            Machine-readable code. Common values: BAD_REQUEST, INVALID_INPUT,
+            NOT_FOUND, FORBIDDEN, AUTH_REQUIRED, AUTH_EXPIRED,
+            INSUFFICIENT_CREDITS, ACTION_UNAVAILABLE, EXECUTION_FAILED,
+            ACTION_EXISTS, BUILD_LIMIT_REACHED, BAD_PASSWORD, MFA_REQUIRED,
+            CAPTCHA_REQUIRED, SOURCE_REVOKED, SOURCE_ITEM_NOT_FOUND.
+        message: { type: string }
+        details: { type: string }
+        connect_url: { type: string, description: Present on AUTH_REQUIRED — where to connect the account. }
+        missing_fields:
+          type: array
+          items: { type: string }
+          description: Present on INVALID_PARAMS (login).
+        balance: { type: integer, description: Present on INSUFFICIENT_CREDITS. }
+        required: { type: integer, description: Present on INSUFFICIENT_CREDITS. }
+        existing_actions:
+          type: array
+          description: Present on ACTION_EXISTS.
+          items:
+            type: object
+            properties:
+              action_id: { type: string }
+              name: { type: string }
+              description: { type: string }
+      required: [code, message]
+
+    ActionParam:
+      type: object
+      properties:
+        name: { type: string }
+        type: { type: string, description: "e.g. string, integer, boolean." }
+        required: { type: boolean }
+        default: { description: Default value when not required. }
+        description: { type: string }
+
+    CatalogEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid, description: Internal catalog ID — pass when creating identities. }
+        slug: { type: string }
+        name: { type: string }
+        url: { type: string }
+        domain: { type: string }
+        category: { type: string }
+        description: { type: string }
+        logo_url: { type: string }
+        auth_required: { type: boolean }
+        auth_type: { type: string, description: "Primary credential type, or omitted when none." }
+        auth_types:
+          type: array
+          items: { type: string, enum: [browser_state, credentials, api_key, token] }
+        auth_login_url: { type: string }
+        supported_sources:
+          type: array
+          items: { type: string }
+          description: "Credential-source providers this catalog supports (e.g. `1password`)."
+        status: { type: string, enum: [active, pending_review] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        action_count: { type: integer }
+
+    Action:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        action_id: { type: string, description: Pass this as `action_id` to POST /task. }
+        catalog_id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        type: { type: string, enum: [read, write] }
+        mode: { type: string, enum: [async, sync], description: "`async` returns a job_id; `sync` returns data inline." }
+        auth_mode: { type: string, enum: [none, optional, required] }
+        auth_required: { type: boolean, description: Deprecated mirror — true iff `auth_mode == "required"`. }
+        parameters:
+          type: array
+          items: { $ref: "#/components/schemas/ActionParam" }
+        credits_per_call: { type: integer }
+        wheel_version: { type: string }
+        wheel_filename: { type: string }
+        build_request_id: { type: string, format: uuid }
+        owner_user_id: { type: string, format: uuid, description: Set for private actions you built. }
+        status: { type: string, enum: [active, pending_review] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SearchResult:
+      type: object
+      properties:
+        action_id: { type: string }
+        catalog_name: { type: string }
+        catalog_slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        mode: { type: string, enum: [async, sync] }
+        auth_mode: { type: string, enum: [none, optional, required] }
+        auth_required: { type: boolean }
+        connected: { type: boolean, description: You already hold an active credential for this catalog. }
+        params:
+          type: array
+          items: { $ref: "#/components/schemas/ActionParam" }
+        credits: { type: integer }
+
+    ResolveResult:
+      type: object
+      properties:
+        action_id: { type: string }
+        catalog: { type: string, description: Catalog slug. }
+        params:
+          type: object
+          properties:
+            required:
+              type: array
+              items: { type: object, additionalProperties: true }
+            optional:
+              type: array
+              items: { type: object, additionalProperties: true }
+        credits: { type: integer }
+        auth_required: { type: boolean }
+        auth_satisfied:
+          type: [boolean, "null"]
+          description: "null = unauthenticated caller; true = no credential needed or you hold one; false = needs a credential."
+
+    TaskRequest:
+      type: object
+      required: [action_id]
+      properties:
+        action_id: { type: string }
+        params:
+          type: object
+          description: Action-specific input parameters.
+          additionalProperties: true
+        identity_id: { type: string, format: uuid, description: Optional identity selector. }
+        credential_id:
+          type: string
+          format: uuid
+          description: Required when the action's `auth_mode` is `required`; honored when `optional`; ignored when `none`.
+
+    TaskAccepted:
+      type: object
+      properties:
+        status: { type: string, example: processing }
+        job_id: { type: string, format: uuid }
+        poll_url: { type: string }
+
+    JobStatus:
+      type: object
+      description: Shape varies by `status`.
+      properties:
+        status: { type: string, enum: [processing, completed, failed] }
+        retry_after_ms: { type: integer, description: Present when processing. }
+        data:
+          type: object
+          description: Present when completed.
+          additionalProperties: true
+        credits_used: { type: integer }
+        execution_ms: { type: integer }
+        error: { $ref: "#/components/schemas/Error" }
+      required: [status]
+
+    Job:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        action_id: { type: string }
+        action_name: { type: string }
+        catalog_id: { type: string, format: uuid }
+        catalog_slug: { type: string }
+        params:
+          type: object
+          additionalProperties: true
+        status: { type: string, enum: [processing, completed, failed] }
+        result:
+          type: object
+          additionalProperties: true
+        credits_used: { type: integer }
+        credential_id: { type: string, format: uuid }
+        credential_type: { type: string }
+        identity_name: { type: string }
+        error: { type: string }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
+    Identity:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        catalog_id: { type: string, format: uuid }
+        name: { type: string }
+        is_default: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        credentials:
+          type: array
+          items: { $ref: "#/components/schemas/IdentityCredential" }
+
+    IdentityCredential:
+      type: object
+      properties:
+        id: { type: string, format: uuid, description: Use as `credential_id` in task requests. }
+        identity_id: { type: string, format: uuid }
+        credential_type: { type: string, enum: [browser_state, credentials, api_key, token] }
+        status: { type: string, enum: [active, expired] }
+        expires_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        metadata:
+          type: object
+          additionalProperties: true
+        source_id: { type: string, format: uuid, description: Present only on source-backed credentials. }
+        source_ref:
+          type: object
+          description: Present only on source-backed credentials.
+          properties:
+            vault_id: { type: string }
+            item_id: { type: string }
+            fields:
+              type: array
+              items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateIdentityRequest:
+      type: object
+      required: [catalog_id, name]
+      properties:
+        catalog_id: { type: string, format: uuid }
+        name: { type: string }
+        is_default: { type: boolean }
+        credential:
+          type: object
+          description: Optional — supply to atomically verify-and-create a credential.
+          properties:
+            type: { type: string, enum: [credentials, api_key, token] }
+            data:
+              type: object
+              additionalProperties: true
+            metadata:
+              type: object
+              additionalProperties: true
+            source_id: { type: string, format: uuid }
+            source_ref:
+              type: object
+              properties:
+                vault_id: { type: string }
+                item_id: { type: string }
+                fields:
+                  type: array
+                  items: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [catalog_slug]
+      description: Supply either `params` (password mode) or `source_id` + `source_ref` (1Password) — not both.
+      properties:
+        catalog_slug: { type: string }
+        identity_name:
+          type: string
+          description: Optional in password mode (derived from params); required with a locator.
+        params:
+          type: object
+          description: Wheel-defined login fields (discover via `login_input_schema`).
+          additionalProperties: true
+        source_id: { type: string, format: uuid }
+        source_ref:
+          type: object
+          properties:
+            vault_id: { type: string }
+            item_id: { type: string }
+            fields:
+              type: array
+              items: { type: string }
+
+    LoginSuccess:
+      type: object
+      properties:
+        status: { type: string, example: verified }
+        identity_id: { type: string, format: uuid }
+        identity_name: { type: string }
+        credential_id: { type: string, format: uuid, description: Pass as `credential_id` to POST /task. }
+        catalog_id: { type: string, format: uuid }
+        catalog_slug: { type: string }
+        expires_at: { type: string, format: date-time, description: Session expiry (capped at 30 days). }
+
+    IdentitySource:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        provider: { type: string, example: "1password" }
+        display_name: { type: string }
+        config:
+          type: object
+          additionalProperties: true
+        scope_metadata:
+          type: object
+          description: Provider-specific scope (e.g. readable vaults).
+          additionalProperties: true
+        status: { type: string, enum: [pending, active, revoked, expired] }
+        last_verified_at: { type: string, format: date-time }
+        credentials_expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SourceIdentity:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        is_default: { type: boolean }
+        catalog_id: { type: string, format: uuid }
+        catalog_slug: { type: string }
+        catalog_name: { type: string }
+        has_active_credential: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    BuildRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        website_url: { type: string }
+        domain: { type: string }
+        catalog_id: { type: string, format: uuid }
+        goal: { type: string }
+        visibility: { type: string, enum: [private, public] }
+        status: { type: string, enum: [pending, success, failed] }
+        action_id: { type: string, description: Present once published — pass to POST /task. }
+        error: { type: string }
+        error_type: { type: string }
+        credits_charged: { type: integer }
+        priority: { type: string }
+        team: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }

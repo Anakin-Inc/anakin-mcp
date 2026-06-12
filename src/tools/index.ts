@@ -13,7 +13,7 @@ import { searchTool } from './search.js'
 import { mapTool } from './map.js'
 import { crawlTool } from './crawl.js'
 import { agenticSearchTool } from './agentic-search.js'
-import { wireTool } from './wire.js'
+import { wireTools } from './wire.js'
 
 export interface ToolContent {
   content: Array<{ type: 'text'; text: string }>
@@ -40,7 +40,7 @@ export const tools: AnakinTool[] = [
   mapTool,
   crawlTool,
   agenticSearchTool,
-  wireTool,
+  ...wireTools,
 ]
 
 const byName: Record<string, AnakinTool> = Object.fromEntries(
