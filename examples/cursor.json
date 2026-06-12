@@ -2,7 +2,7 @@
   "mcpServers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "@anakin-io/mcp"],
+      "args": ["-y", "@anakin-io/mcp@latest"],
       "env": {
         "ANAKIN_API_KEY": "ak-replace-me"
       }

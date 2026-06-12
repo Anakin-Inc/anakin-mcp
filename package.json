@@ -1,6 +1,6 @@
 {
   "name": "@anakin-io/mcp",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Model Context Protocol server for Anakin (anakin.io) — gives AI agents in Claude Desktop, Cursor, Windsurf, VS Code, and other MCP-compatible clients native access to web scraping, search, crawling, mapping, agentic research, and Wire actions.",
   "license": "Apache-2.0",
   "homepage": "https://anakin.io",
@@ -32,7 +32,7 @@
   "module": "./dist/cli.js",
   "types": "./dist/cli.d.ts",
   "bin": {
-    "anakin-mcp": "./dist/cli.js"
+    "anakin-mcp": "dist/cli.js"
   },
   "files": [
     "dist",

@@ -40,7 +40,7 @@ export interface AnakinServerEntryV2 extends AnakinServerEntry {
 export function buildAnakinEntry(apiKey: string): AnakinServerEntry {
   return {
     command: 'npx',
-    args: ['-y', '@anakin-io/mcp'],
+    args: ['-y', '@anakin-io/mcp@latest'],
     env: { ANAKIN_API_KEY: apiKey },
   }
 }
@@ -49,7 +49,7 @@ export function buildAnakinEntryV2(apiKey: string): AnakinServerEntryV2 {
   return {
     type: 'stdio',
     command: 'npx',
-    args: ['-y', '@anakin-io/mcp'],
+    args: ['-y', '@anakin-io/mcp@latest'],
     env: { ANAKIN_API_KEY: apiKey },
   }
 }
