@@ -53,18 +53,19 @@ Each tool is a thin wrapper around the Anakin REST API — there is no scraping 
 
 ## Updating
 
-The configs here pin `@anakin-io/mcp@latest`, so every time your client launches
-the server, `npx` resolves and runs the newest published version — just
-**restart your client** to pick up a release.
+Configs created by this package pin `@anakin-io/mcp@latest`, so updates are
+**automatic** — every time your client launches the server, `npx` runs the
+newest published version. Just **restart your client** to pick up a release.
 
-If your config uses an unpinned `@anakin-io/mcp` (no `@latest`), `npx` can keep
-serving an older cached build. Refresh it once:
+**Already set up before v0.1.4?** Your config likely uses an unpinned
+`@anakin-io/mcp`, which `npx` keeps serving from cache. Run this once to switch
+it to auto-updating — it keeps your API key and never prompts:
 
 ```bash
-rm -rf ~/.npm/_npx        # clear npx's install cache, then restart your client
+npx -y @anakin-io/mcp@latest update
 ```
 
-Confirm which version you're running:
+Then restart your client. Confirm the version with:
 
 ```bash
 npx -y @anakin-io/mcp@latest --version

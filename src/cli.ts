@@ -10,7 +10,7 @@
  */
 
 import { runServer } from './server.js'
-import { runInit } from './init/index.js'
+import { runInit, runUpdate } from './init/index.js'
 import { VERSION } from './version.js'
 
 const HELP = `\
@@ -28,6 +28,8 @@ Usage:
   anakin-mcp init --client=<name>  Only configure one client.
                                    Names: claude-desktop, claude-code, cursor,
                                    cline, continue, zed, windsurf, vscode.
+  anakin-mcp update                Re-pin configured clients to @latest so they
+                                   auto-update. Keeps your API key; no prompts.
   anakin-mcp --version             Print version and exit.
   anakin-mcp --help                Print this help and exit.
 
@@ -56,6 +58,11 @@ async function main(): Promise<void> {
 
   if (subcommand === 'init') {
     await runInit(args.slice(1))
+    return
+  }
+
+  if (subcommand === 'update') {
+    await runUpdate(args.slice(1))
     return
   }
 

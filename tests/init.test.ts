@@ -22,7 +22,11 @@ import {
   displayName,
   type ClientName,
 } from '../src/init/paths.js'
-import { buildAnakinEntry, writeClientConfig } from '../src/init/clients.js'
+import {
+  buildAnakinEntry,
+  writeClientConfig,
+  updateClientConfig,
+} from '../src/init/clients.js'
 
 describe('paths.ts: client metadata', () => {
   it('lists all 8 supported clients in ALL_CLIENTS', () => {
@@ -216,5 +220,124 @@ describe('clients.ts: writeClientConfig — schema-aware merge', () => {
       mcpServers: { anakin: { env: { ANAKIN_API_KEY: string } } }
     }
     expect(config.mcpServers.anakin.env.ANAKIN_API_KEY).toBe('ak-9')
+  })
+})
+
+describe('clients.ts: updateClientConfig — re-pin to @latest', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anakin-mcp-upd-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('re-pins a bare `@anakin-io/mcp` to @latest and PRESERVES the API key (no prompt)', async () => {
+    const file = path.join(tmpDir, 'mcp.json')
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        mcpServers: {
+          anakin: {
+            command: 'npx',
+            args: ['-y', '@anakin-io/mcp'],
+            env: { ANAKIN_API_KEY: 'ak-keep-me' },
+          },
+        },
+      }),
+    )
+
+    const result = await updateClientConfig('cursor', file)
+    expect(result).toBe('updated')
+
+    const config = JSON.parse(await fs.readFile(file, 'utf8')) as {
+      mcpServers: { anakin: { args: string[]; env: { ANAKIN_API_KEY: string } } }
+    }
+    expect(config.mcpServers.anakin.args).toEqual(['-y', '@anakin-io/mcp@latest'])
+    // The key is carried over untouched — update never re-prompts.
+    expect(config.mcpServers.anakin.env.ANAKIN_API_KEY).toBe('ak-keep-me')
+  })
+
+  it('re-pins an old pinned version (`@0.1.2`) to @latest', async () => {
+    const file = path.join(tmpDir, 'mcp.json')
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        mcpServers: {
+          anakin: { command: 'npx', args: ['-y', '@anakin-io/mcp@0.1.2'], env: {} },
+        },
+      }),
+    )
+    const result = await updateClientConfig('cursor', file)
+    expect(result).toBe('updated')
+    const config = JSON.parse(await fs.readFile(file, 'utf8')) as {
+      mcpServers: { anakin: { args: string[] } }
+    }
+    expect(config.mcpServers.anakin.args).toEqual(['-y', '@anakin-io/mcp@latest'])
+  })
+
+  it('is a no-op when already pinned to @latest', async () => {
+    const file = path.join(tmpDir, 'mcp.json')
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        mcpServers: {
+          anakin: { command: 'npx', args: ['-y', '@anakin-io/mcp@latest'], env: {} },
+        },
+      }),
+    )
+    const result = await updateClientConfig('cursor', file)
+    expect(result).toBe('already-latest')
+  })
+
+  it('returns not-configured when there is no anakin entry (or no file)', async () => {
+    const missing = path.join(tmpDir, 'absent.json')
+    expect(await updateClientConfig('cursor', missing)).toBe('not-configured')
+
+    const file = path.join(tmpDir, 'mcp.json')
+    await fs.writeFile(file, JSON.stringify({ mcpServers: { other: {} } }))
+    expect(await updateClientConfig('cursor', file)).toBe('not-configured')
+  })
+
+  it('updates the Continue array entry while preserving its key', async () => {
+    const file = path.join(tmpDir, 'config.json')
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        experimental: {
+          modelContextProtocolServers: [
+            { name: 'other', command: 'node', args: ['x'] },
+            {
+              name: 'anakin',
+              command: 'npx',
+              args: ['-y', '@anakin-io/mcp'],
+              env: { ANAKIN_API_KEY: 'ak-cont' },
+            },
+          ],
+        },
+      }),
+    )
+
+    const result = await updateClientConfig('continue', file)
+    expect(result).toBe('updated')
+
+    const config = JSON.parse(await fs.readFile(file, 'utf8')) as {
+      experimental: {
+        modelContextProtocolServers: Array<{
+          name: string
+          args?: string[]
+          env?: { ANAKIN_API_KEY?: string }
+        }>
+      }
+    }
+    const anakin = config.experimental.modelContextProtocolServers.find(
+      (s) => s.name === 'anakin',
+    )
+    expect(anakin?.args).toEqual(['-y', '@anakin-io/mcp@latest'])
+    expect(anakin?.env?.ANAKIN_API_KEY).toBe('ak-cont')
+    // Other entries are left intact.
+    expect(config.experimental.modelContextProtocolServers).toHaveLength(2)
   })
 })

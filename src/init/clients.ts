@@ -202,3 +202,87 @@ export async function writeClientConfig(
   await writeJson(configFilePath, updated)
   return true
 }
+
+// ── Update: re-pin an existing anakin entry to @latest ────────────────────
+//
+// Unlike init, update never asks for an API key — it edits the args of the
+// anakin entry already in the config (preserving command, env, and key) so a
+// stale `@anakin-io/mcp` (or an old pinned version) becomes
+// `@anakin-io/mcp@latest`, after which npx auto-fetches new releases.
+
+const LATEST_SPEC = '@anakin-io/mcp@latest'
+/** Matches the package whether bare (`@anakin-io/mcp`) or pinned (`...@0.1.2`). */
+const PACKAGE_SPEC_RE = /^@anakin-io\/mcp(@.+)?$/
+
+export type UpdateResult = 'updated' | 'already-latest' | 'not-configured'
+
+interface ServerEntryLike {
+  args?: unknown
+  [key: string]: unknown
+}
+
+/** Find the (mutable) anakin server entry in a parsed config, per client schema. */
+function locateAnakinEntry(
+  client: ClientName,
+  config: JsonConfig,
+): ServerEntryLike | null {
+  if (client === 'continue') {
+    const experimental = config['experimental'] as JsonConfig | undefined
+    const servers = experimental?.['modelContextProtocolServers']
+    if (!Array.isArray(servers)) return null
+    return (
+      (servers as ServerEntryLike[]).find((s) => s?.['name'] === 'anakin') ?? null
+    )
+  }
+  if (client === 'claude-code') {
+    const projects = config['projects'] as JsonConfig | undefined
+    const project = projects?.[process.cwd()] as JsonConfig | undefined
+    const mcpServers = project?.['mcpServers'] as JsonConfig | undefined
+    return (mcpServers?.['anakin'] as ServerEntryLike) ?? null
+  }
+  const key = objectStyleKey(client)
+  if (key === null) return null
+  const servers = config[key] as JsonConfig | undefined
+  return (servers?.['anakin'] as ServerEntryLike) ?? null
+}
+
+/** Re-pin the package token in an args array to @latest, preserving the rest. */
+function repinArgs(args: unknown): { args: string[]; changed: boolean } {
+  if (!Array.isArray(args)) {
+    return { args: ['-y', LATEST_SPEC], changed: true }
+  }
+  let matched = false
+  const next = (args as unknown[]).map((a) => {
+    if (typeof a === 'string' && PACKAGE_SPEC_RE.test(a)) {
+      matched = true
+      return LATEST_SPEC
+    }
+    return a as string
+  })
+  // Entry didn't name the package by spec (unexpected) → normalize it.
+  if (!matched) return { args: ['-y', LATEST_SPEC], changed: true }
+  const changed = JSON.stringify(args) !== JSON.stringify(next)
+  return { args: next, changed }
+}
+
+/**
+ * Re-pin an already-configured anakin entry to @latest. Returns:
+ *  - 'not-configured' if this client has no anakin entry (nothing written),
+ *  - 'already-latest'  if it was already pinned to @latest (no write),
+ *  - 'updated'         if the entry was re-pinned and the file rewritten.
+ */
+export async function updateClientConfig(
+  client: ClientName,
+  configFilePath: string,
+): Promise<UpdateResult> {
+  const config = await readJson(configFilePath)
+  const entry = locateAnakinEntry(client, config)
+  if (!entry) return 'not-configured'
+
+  const { args, changed } = repinArgs(entry.args)
+  if (!changed) return 'already-latest'
+
+  entry.args = args
+  await writeJson(configFilePath, config)
+  return 'updated'
+}

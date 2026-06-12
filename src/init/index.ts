@@ -15,7 +15,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { ALL_CLIENTS, configPath, displayName, type ClientName } from './paths.js'
-import { writeClientConfig } from './clients.js'
+import { writeClientConfig, updateClientConfig } from './clients.js'
 
 interface InitOptions {
   all: boolean
@@ -170,5 +170,75 @@ export async function runInit(args: string[]): Promise<void> {
   )
   process.stdout.write(
     'Restart your client(s) for the change to take effect.\n',
+  )
+}
+
+/** Parse `update` args — only a `--client=` filter (repeatable) and help. */
+function parseUpdateClients(args: string[]): ClientName[] | null {
+  let clients: ClientName[] | null = null
+  for (const arg of args) {
+    if (arg.startsWith('--client=')) {
+      const name = arg.slice('--client='.length) as ClientName
+      if (!ALL_CLIENTS.includes(name)) {
+        throw new Error(`Unknown client: ${name}. Supported: ${ALL_CLIENTS.join(', ')}`)
+      }
+      clients = [...(clients ?? []), name]
+    } else if (arg === '--help' || arg === '-h') {
+      process.stdout.write(`\
+anakin-mcp update — re-pin configured clients to @anakin-io/mcp@latest
+
+Rewrites each client's existing anakin entry to pin @latest so npx fetches new
+releases automatically. Keeps your API key — never prompts.
+
+Usage:
+  anakin-mcp update                  Update every detected client
+  anakin-mcp update --client=cursor  Only update one client
+`)
+      process.exit(0)
+    } else {
+      throw new Error(`Unknown update option: ${arg}`)
+    }
+  }
+  return clients
+}
+
+/**
+ * `anakin-mcp update` — re-point already-configured clients at
+ * `@anakin-io/mcp@latest` so they auto-update on the next restart. Unlike
+ * init, this preserves the API key already in each config and never prompts.
+ */
+export async function runUpdate(args: string[]): Promise<void> {
+  const filter = parseUpdateClients(args)
+  const detected = await detectClients(filter)
+
+  let updated = 0
+  let current = 0
+
+  for (const { client, configFilePath } of detected) {
+    const result = await updateClientConfig(client, configFilePath)
+    const label = displayName(client)
+    if (result === 'updated') {
+      process.stdout.write(`✓ ${label}: re-pinned to @latest\n`)
+      updated++
+    } else if (result === 'already-latest') {
+      process.stdout.write(`• ${label}: already on @latest\n`)
+      current++
+    }
+    // 'not-configured' → silent unless a specific client was requested
+    else if (filter) {
+      process.stdout.write(`– ${label}: no anakin entry found (run \`anakin-mcp init\`)\n`)
+    }
+  }
+
+  if (updated + current === 0) {
+    process.stdout.write(
+      'No anakin entries found to update. Run `anakin-mcp init` to set one up.\n',
+    )
+    return
+  }
+
+  process.stdout.write(
+    `\nUpdated ${updated} config(s)${current > 0 ? `, ${current} already current` : ''}.\n` +
+      'Restart your client(s) to load the latest version.\n',
   )
 }
