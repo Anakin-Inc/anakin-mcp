@@ -15,7 +15,7 @@ Gives AI agents in Claude Desktop, Cursor, Windsurf, VS Code, and any other MCP-
 One command configures every detected agent client:
 
 ```bash
-npx -y @anakin-io/mcp init --all
+npx -y @anakin-io/mcp@latest init --all
 ```
 
 You'll be prompted for your API key (or set `ANAKIN_API_KEY` first to skip the prompt). Get one free at [anakin.io/dashboard](https://anakin.io/dashboard) — 500 credits, no card required.
@@ -51,6 +51,25 @@ action's auth mode is `required`.
 
 Each tool is a thin wrapper around the Anakin REST API — there is no scraping logic in this package, just MCP-protocol glue. The HTTP client is self-contained (`src/client.ts`); no runtime dependency on the [`@anakin-io/sdk`](https://github.com/Anakin-Inc/anakin-node) Node SDK.
 
+## Updating
+
+The configs here pin `@anakin-io/mcp@latest`, so every time your client launches
+the server, `npx` resolves and runs the newest published version — just
+**restart your client** to pick up a release.
+
+If your config uses an unpinned `@anakin-io/mcp` (no `@latest`), `npx` can keep
+serving an older cached build. Refresh it once:
+
+```bash
+rm -rf ~/.npm/_npx        # clear npx's install cache, then restart your client
+```
+
+Confirm which version you're running:
+
+```bash
+npx -y @anakin-io/mcp@latest --version
+```
+
 ## Manual setup per client
 
 ### Claude Desktop
@@ -62,7 +81,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
   "mcpServers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "@anakin-io/mcp"],
+      "args": ["-y", "@anakin-io/mcp@latest"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -82,7 +101,7 @@ Edit `~/.claude/settings.json`:
   "mcpServers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "@anakin-io/mcp"],
+      "args": ["-y", "@anakin-io/mcp@latest"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -94,7 +113,7 @@ Edit `~/.claude/settings.json`:
 Or use Claude Code's built-in command:
 
 ```bash
-claude mcp add anakin npx -y @anakin-io/mcp -e ANAKIN_API_KEY=ak-...
+claude mcp add anakin npx -y @anakin-io/mcp@latest -e ANAKIN_API_KEY=ak-...
 ```
 
 ### Cursor
@@ -106,7 +125,7 @@ Edit `~/.cursor/mcp.json` (user-scoped) or `./.cursor/mcp.json` (project-scoped)
   "mcpServers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "@anakin-io/mcp"],
+      "args": ["-y", "@anakin-io/mcp@latest"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -132,7 +151,7 @@ Edit Cline's settings file inside VS Code's globalStorage:
   "mcpServers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "@anakin-io/mcp"],
+      "args": ["-y", "@anakin-io/mcp@latest"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -154,7 +173,7 @@ Edit `~/.continue/config.json`:
       {
         "name": "anakin",
         "command": "npx",
-        "args": ["-y", "@anakin-io/mcp"],
+        "args": ["-y", "@anakin-io/mcp@latest"],
         "env": {
           "ANAKIN_API_KEY": "ak-..."
         }
@@ -175,7 +194,7 @@ Edit `~/.config/zed/settings.json` (macOS / Linux) or `%APPDATA%/Zed/settings.js
   "context_servers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "@anakin-io/mcp"],
+      "args": ["-y", "@anakin-io/mcp@latest"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -195,7 +214,7 @@ Edit `~/.codeium/windsurf/mcp_config.json`:
   "mcpServers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "@anakin-io/mcp"],
+      "args": ["-y", "@anakin-io/mcp@latest"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }
@@ -215,7 +234,7 @@ Edit `.vscode/mcp.json` in your workspace:
   "servers": {
     "anakin": {
       "command": "npx",
-      "args": ["-y", "@anakin-io/mcp"],
+      "args": ["-y", "@anakin-io/mcp@latest"],
       "env": {
         "ANAKIN_API_KEY": "ak-..."
       }

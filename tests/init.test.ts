@@ -80,7 +80,7 @@ describe('clients.ts: buildAnakinEntry', () => {
     const entry = buildAnakinEntry('ak-test')
     expect(entry).toEqual({
       command: 'npx',
-      args: ['-y', '@anakin-io/mcp'],
+      args: ['-y', '@anakin-io/mcp@latest'],
       env: { ANAKIN_API_KEY: 'ak-test' },
     })
   })
@@ -112,7 +112,7 @@ describe('clients.ts: writeClientConfig — schema-aware merge', () => {
       mcpServers?: { anakin?: { args: string[]; env: { ANAKIN_API_KEY: string } } }
     }
     expect(config.mcpServers?.anakin).toBeTruthy()
-    expect(config.mcpServers?.anakin?.args).toEqual(['-y', '@anakin-io/mcp'])
+    expect(config.mcpServers?.anakin?.args).toEqual(['-y', '@anakin-io/mcp@latest'])
     expect(config.mcpServers?.anakin?.env.ANAKIN_API_KEY).toBe('ak-1')
   })
 
