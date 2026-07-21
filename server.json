@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.anakin/mcp",
   "title": "Anakin",
-  "description": "Web data tools for AI agents: scrape pages to markdown or structured JSON, map and crawl sites, run AI search and multi-source deep research, execute pre-built Wire actions across hundreds of popular websites, monitor pages for changes, compare AI answer engines, and drive a real cloud browser with natural language.",
+  "description": "Web data for AI agents: scrape, crawl, search, deep research, site monitoring, browser automation",
   "version": "0.2.1",
   "websiteUrl": "https://anakin.io",
   "repository": {
