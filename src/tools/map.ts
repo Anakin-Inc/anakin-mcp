@@ -5,6 +5,11 @@ export const mapTool: AnakinTool = {
   name: 'map',
   description:
     'Discover all reachable URLs under a given site. Useful for understanding a domain\'s structure before crawling, or finding the sub-pages an agent should scrape. Returns lists of internal links, external links, and counts. Honors depth and limit parameters.',
+  annotations: {
+    title: "Map a site's URLs",
+    readOnlyHint: true,
+    openWorldHint: true,
+  },
   inputSchema: {
     type: 'object',
     properties: {

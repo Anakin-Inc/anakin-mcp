@@ -4,11 +4,18 @@
  * Kept deliberately minimal so anakin-mcp has no runtime dependency on the
  * @anakin/sdk Node package. The shape mirrors @anakin/sdk closely enough
  * that swapping over later is a refactor (no behavior change).
+ *
+ * Transport-agnostic and kept in sync with `anakin-mcp-remote/src/client.ts`
+ * (the hosted server constructs an AnakinClient per-request with the resolved
+ * user key; here it is built once from the env).
  */
 
 const DEFAULT_BASE_URL = 'https://api.anakin.io/v1'
 const POLL_INTERVAL_MS = 3000
 const POLL_MAX_ATTEMPTS = 60 // 3 minutes total
+// Browser AI tasks are hard-capped server-side at ~330s, so their poll window
+// must outlast the longest legitimate run.
+const BROWSER_TASK_POLL_MAX_ATTEMPTS = 120 // 6 minutes total
 const REQUEST_TIMEOUT_MS = 30_000
 
 export interface AnakinConfig {
@@ -336,6 +343,150 @@ export class AnakinClient {
   async wireBuild(body: WireBuildRequest): Promise<unknown> {
     return await this.request<unknown>('POST', '/wire/build-request', body)
   }
+
+  // ── Website Monitoring ────────────────────────────────────────────────
+
+  async monitorCreate(
+    url: string,
+    intervalMinutes: number,
+    options: MonitorCreateOptions = {},
+  ): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { url, intervalMinutes }
+    // Only send fields the caller set — the API applies its own defaults.
+    for (const [k, v] of Object.entries(options)) {
+      if (v !== undefined) body[k] = v
+    }
+    return await this.request<Record<string, unknown>>('POST', '/monitors', body)
+  }
+
+  async monitorList(): Promise<unknown> {
+    return await this.request<unknown>('GET', '/monitors')
+  }
+
+  async monitorGet(id: string): Promise<unknown> {
+    return await this.request<unknown>('GET', `/monitors/${encodeURIComponent(id)}`)
+  }
+
+  async monitorChanges(id: string): Promise<unknown> {
+    return await this.request<unknown>(
+      'GET',
+      `/monitors/${encodeURIComponent(id)}/changes`,
+    )
+  }
+
+  async monitorControl(
+    id: string,
+    action: 'pause' | 'resume' | 'run_now' | 'delete',
+  ): Promise<unknown> {
+    const base = `/monitors/${encodeURIComponent(id)}`
+    switch (action) {
+      case 'pause':
+        return await this.request<unknown>('POST', `${base}/pause`)
+      case 'resume':
+        return await this.request<unknown>('POST', `${base}/resume`)
+      case 'run_now':
+        return await this.request<unknown>('POST', `${base}/run`)
+      case 'delete':
+        return await this.request<unknown>('DELETE', base)
+    }
+  }
+
+  // ── AI Visibility ─────────────────────────────────────────────────────
+
+  /** Available AI engines ({slug, label} roster) for aiVisibilitySearch. */
+  async aiVisibilitySources(): Promise<unknown> {
+    return await this.request<unknown>('GET', '/ai-visibility/sources')
+  }
+
+  /**
+   * Submit a search and poll to a terminal state. Unlike pollJob, a `failed`
+   * status is returned (not thrown): the payload carries per-source results
+   * and errors the caller needs either way.
+   */
+  async aiVisibilitySearch(
+    query: string,
+    options: AIVisibilitySearchOptions = {},
+  ): Promise<AIVisibilitySearch> {
+    const body: Record<string, unknown> = { query }
+    if (options.sources !== undefined) body['sources'] = options.sources
+    if (options.country !== undefined) body['country'] = options.country
+
+    const submitted = await this.request<AIVisibilitySearch>(
+      'POST',
+      '/ai-visibility/search',
+      body,
+    )
+    const path = `/ai-visibility/search/${encodeURIComponent(submitted.search_id)}`
+    for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
+      const search = await this.request<AIVisibilitySearch>('GET', path)
+      if (search.status !== 'running') return search
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+    }
+    throw new AnakinError(
+      `AI visibility search ${submitted.search_id} timed out after 3 minutes; ` +
+        'poll it later via the dashboard or retry',
+    )
+  }
+
+  // ── Browser sessions ──────────────────────────────────────────────────
+
+  async sessionsList(domain?: string): Promise<unknown> {
+    return await this.request<unknown>('GET', withQuery('/sessions', { domain }))
+  }
+
+  async sessionDelete(id: string): Promise<unknown> {
+    return await this.request<unknown>(
+      'DELETE',
+      `/sessions/${encodeURIComponent(id)}`,
+    )
+  }
+
+  // ── AI browser automation ─────────────────────────────────────────────
+
+  /**
+   * Run a natural-language browser task. Always submits in async mode
+   * (`async: true` → 202 + workflow_id) and polls `/ai/jobs/:id`: the sync
+   * variant blocks the HTTP request for up to ~5.5 minutes, far past our
+   * per-request timeout.
+   */
+  async browserTask(
+    prompt: string,
+    options: BrowserTaskOptions = {},
+  ): Promise<BrowserTaskResult> {
+    const body: Record<string, unknown> = { prompt, async: true }
+    if (options.url !== undefined) body['url'] = options.url
+    if (options.sessionId !== undefined) body['session_id'] = options.sessionId
+    if (options.maxSteps !== undefined) body['max_steps'] = options.maxSteps
+    if (options.timeoutMs !== undefined) body['timeout_ms'] = options.timeoutMs
+    if (options.outputSchema !== undefined) body['output_schema'] = options.outputSchema
+
+    const accepted = await this.request<{ workflow_id?: string; status?: string }>(
+      'POST',
+      '/ai/evaluate',
+      body,
+    )
+    if (!accepted.workflow_id) {
+      // Service answered synchronously (shouldn't happen with async: true).
+      return accepted as BrowserTaskResult
+    }
+
+    const path = `/ai/jobs/${encodeURIComponent(accepted.workflow_id)}`
+    for (let i = 0; i < BROWSER_TASK_POLL_MAX_ATTEMPTS; i++) {
+      const job = await this.request<BrowserTaskJob>('GET', path)
+      if (job.status === 'completed') {
+        return job.result ?? (job as unknown as BrowserTaskResult)
+      }
+      if (job.status === 'failed' || job.status === 'timed_out') {
+        throw new AnakinError(
+          `Browser task ${job.status}: ${job.error ?? 'unknown'}`,
+          undefined,
+          job.status.toUpperCase(),
+        )
+      }
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+    }
+    throw new AnakinError('Browser task timed out after 6 minutes of polling')
+  }
 }
 
 // ── Response types (subset of what the API returns) ─────────────────────
@@ -470,4 +621,85 @@ export interface WireBuildRequest {
   catalog_id?: string
   visibility?: 'private' | 'public'
   force?: boolean
+}
+
+// ── Website Monitoring ──────────────────────────────────────────────────
+
+export interface MonitorCreateOptions {
+  scope?: 'page' | 'site' | 'wire'
+  watchMode?: 'full_page' | 'specific_data'
+  watchFormat?: 'markdown' | 'html' | 'cleaned_html'
+  /** JSON Schema of the fields to track — required for specific_data mode. */
+  outputSchema?: Record<string, unknown>
+  aiMode?: boolean
+  aiGoal?: string
+  useBrowser?: boolean
+  country?: string
+  sessionId?: string
+  isActive?: boolean
+  expiresAt?: string
+  alertWebhookUrl?: string
+  /** Comma-separated recipient list (the API takes a string, not an array). */
+  alertEmails?: string
+  // Site scope
+  maxPages?: number
+  maxDepth?: number
+  includePatterns?: string[]
+  excludePatterns?: string[]
+  // Wire scope
+  wireActionId?: string
+  wireCatalogSlug?: string
+  wireCredentialId?: string
+  wireParams?: Record<string, unknown>
+  wireWatchPaths?: string[]
+}
+
+// ── AI Visibility ───────────────────────────────────────────────────────
+
+export interface AIVisibilitySearchOptions {
+  /** Engine slugs (see aiVisibilitySources). Omit to query all enabled. */
+  sources?: string[]
+  /** ISO 3166-1 alpha-2 search geography. Defaults to "us" server-side. */
+  country?: string
+}
+
+export interface AIVisibilitySearch {
+  search_id: string
+  status: 'running' | 'completed' | 'failed' | string
+  results: Array<Record<string, unknown>>
+  synthesis?: string
+  country?: string
+}
+
+// ── AI browser automation ───────────────────────────────────────────────
+
+export interface BrowserTaskOptions {
+  /** Navigate here before starting the task. */
+  url?: string
+  /** Saved browser session to load (authenticated tasks). */
+  sessionId?: string
+  maxSteps?: number
+  timeoutMs?: number
+  /** JSON Schema for structured output. */
+  outputSchema?: Record<string, unknown>
+}
+
+export interface BrowserTaskResult {
+  success?: boolean
+  result?: unknown
+  steps?: unknown[]
+  iterations?: number
+  cached?: boolean
+  run_id?: string
+  duration_ms?: number
+  [key: string]: unknown
+}
+
+interface BrowserTaskJob {
+  workflow_id?: string
+  status?: 'running' | 'completed' | 'failed' | 'timed_out' | string
+  run_id?: string
+  result?: BrowserTaskResult
+  error?: string
+  [key: string]: unknown
 }

@@ -5,6 +5,11 @@ export const searchTool: AnakinTool = {
   name: 'search',
   description:
     'Run an AI web search and return result URLs, titles, and snippets. Synchronous — returns immediately, no polling. Use this when the agent needs to discover pages relevant to a query before scraping. Returns a results array with url/title/snippet/date for each hit.',
+  annotations: {
+    title: 'Web search',
+    readOnlyHint: true,
+    openWorldHint: true,
+  },
   inputSchema: {
     type: 'object',
     properties: {

@@ -5,6 +5,11 @@ export const scrapeTool: AnakinTool = {
   name: 'scrape',
   description:
     'Fetch a single URL and return clean markdown by default. Set generateJson=true to also extract structured data with AI. Set useBrowser=true for SPAs and JS-heavy sites (slower and more expensive — only when needed). Returns markdown unless generateJson is true, in which case it returns the structured JSON.',
+  annotations: {
+    title: 'Scrape a web page',
+    readOnlyHint: true,
+    openWorldHint: true,
+  },
   inputSchema: {
     type: 'object',
     properties: {

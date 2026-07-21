@@ -5,6 +5,11 @@ export const crawlTool: AnakinTool = {
   name: 'crawl',
   description:
     'Bulk-fetch markdown across a site. Use this when an agent needs the contents of many pages at once (catalog ingestion, site-wide RAG corpus). Pair with includePatterns / excludePatterns to scope which URLs are fetched. Returns an array of pages each with markdown and per-page status.',
+  annotations: {
+    title: 'Crawl a site',
+    readOnlyHint: true,
+    openWorldHint: true,
+  },
   inputSchema: {
     type: 'object',
     properties: {

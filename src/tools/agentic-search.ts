@@ -5,6 +5,11 @@ export const agenticSearchTool: AnakinTool = {
   name: 'agentic_search',
   description:
     'Run multi-source deep research. The pipeline searches the web, scrapes the most relevant citations, and uses an LLM to structure the combined data into a unified answer. Async — typically 1–5 minutes. Use this when one URL or a flat search result will not answer the question (comparative analysis, multi-jurisdictional research, market intelligence). Returns a summary plus structured_data conforming to the inferred or supplied schema.',
+  annotations: {
+    title: 'Deep research',
+    readOnlyHint: true,
+    openWorldHint: true,
+  },
   inputSchema: {
     type: 'object',
     properties: {

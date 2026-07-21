@@ -1,20 +1,27 @@
 /**
- * Unit tests for the tool registry.
+ * Unit tests for the tool registry (copied from the stdio package).
  *
- * These verify the public contract of @anakin-io/mcp's MCP surface:
+ * These verify the public contract of the MCP surface:
  *   - the right tools are exposed
  *   - each tool has a structurally valid JSON Schema
  *   - dispatchTool routes by name and surfaces errors as MCP error responses
  *     rather than throwing
  *
- * The actual underlying SDK calls are not exercised here — those are the
- * SDK's responsibility. This test file's job is to verify that the MCP
- * glue (tool registry + dispatcher) is correct.
+ * The actual underlying API calls are not exercised here — those are the
+ * AnakinClient's responsibility. This file's job is to verify the MCP glue
+ * (tool registry + dispatcher) survived the copy unchanged.
  */
 
 import { describe, it, expect, vi } from 'vitest'
 
-import { tools, dispatchTool, ok, okJson, type ToolContent } from '../src/tools/index.js'
+import {
+  tools,
+  dispatchTool,
+  selectExposedTools,
+  ok,
+  okJson,
+  type ToolContent,
+} from '../src/tools/index.js'
 import { AnakinClient } from '../src/client.js'
 
 const EXPECTED_TOOL_NAMES = [
@@ -25,11 +32,33 @@ const EXPECTED_TOOL_NAMES = [
   'agentic_search',
   'wire_discover',
   'wire_catalog',
-  'wire_action',
+  'wire_read_action',
+  'wire_write_action',
   'wire_identities',
   'wire_login',
   'wire_build',
+  'monitor_create',
+  'monitor_list',
+  'monitor_changes',
+  'monitor_control',
+  'ai_visibility_search',
+  'ai_visibility_sources',
+  'session_list',
+  'session_delete',
+  'browser_task',
 ] as const
+
+// Read-only tools advertise readOnlyHint; everything else has a side effect and
+// must advertise destructiveHint. Mirrors the Connectors Directory requirement.
+const DESTRUCTIVE_TOOL_NAMES = new Set([
+  'wire_write_action',
+  'wire_login',
+  'wire_build',
+  'monitor_create',
+  'monitor_control',
+  'session_delete',
+  'browser_task',
+])
 
 describe('tools registry', () => {
   it('exposes exactly the expected tools', () => {
@@ -65,6 +94,66 @@ describe('tools registry', () => {
     const names = tools.map((t) => t.name)
     expect(new Set(names).size).toBe(names.length)
   })
+
+  it('tool names are <= 64 chars (Connectors Directory limit)', () => {
+    for (const tool of tools) {
+      expect(tool.name.length).toBeLessThanOrEqual(64)
+    }
+  })
+})
+
+describe('tool annotations (Connectors Directory requirements)', () => {
+  it('every tool has a non-empty title', () => {
+    for (const tool of tools) {
+      expect(typeof tool.annotations.title).toBe('string')
+      expect(tool.annotations.title!.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('every tool carries exactly one safety hint: readOnlyHint XOR destructiveHint', () => {
+    for (const tool of tools) {
+      const readOnly = tool.annotations.readOnlyHint === true
+      const destructive = tool.annotations.destructiveHint === true
+      // exactly one must be set
+      expect(readOnly !== destructive).toBe(true)
+    }
+  })
+
+  it('destructive tools (writes/side effects) are annotated destructive, not read-only', () => {
+    for (const tool of tools) {
+      const shouldBeDestructive = DESTRUCTIVE_TOOL_NAMES.has(tool.name)
+      expect(tool.annotations.destructiveHint === true).toBe(shouldBeDestructive)
+      expect(tool.annotations.readOnlyHint === true).toBe(!shouldBeDestructive)
+    }
+  })
+})
+
+describe('selectExposedTools (tool-exposure profile)', () => {
+  it('full profile (default) exposes every tool', () => {
+    expect(selectExposedTools(tools, {}).map((t) => t.name)).toEqual(tools.map((t) => t.name))
+    expect(selectExposedTools(tools, { toolProfile: 'full' })).toHaveLength(tools.length)
+  })
+
+  it('readonly profile exposes only read-only tools (drops every destructive tool)', () => {
+    const names = selectExposedTools(tools, { toolProfile: 'readonly' }).map((t) => t.name)
+    expect(names).toHaveLength(EXPECTED_TOOL_NAMES.length - DESTRUCTIVE_TOOL_NAMES.size)
+    for (const n of DESTRUCTIVE_TOOL_NAMES) {
+      expect(names).not.toContain(n)
+    }
+    // Sanity: all kept tools are annotated read-only.
+    expect(
+      selectExposedTools(tools, { toolProfile: 'readonly' }).every(
+        (t) => t.annotations.readOnlyHint === true,
+      ),
+    ).toBe(true)
+  })
+
+  it('disabledTools hides specific tools regardless of profile', () => {
+    const names = selectExposedTools(tools, { disabledTools: ['crawl', 'wire_build'] }).map((t) => t.name)
+    expect(names).not.toContain('crawl')
+    expect(names).not.toContain('wire_build')
+    expect(names).toContain('scrape')
+  })
 })
 
 describe('per-tool input schema spot checks', () => {
@@ -86,10 +175,12 @@ describe('per-tool input schema spot checks', () => {
     expect(schema.required).toContain('prompt')
   })
 
-  it('wire_action requires action_id (params optional — some actions take none)', () => {
-    const wire = tools.find((t) => t.name === 'wire_action')!
-    const schema = wire.inputSchema as { required?: string[] }
-    expect(schema.required).toEqual(['action_id'])
+  it('wire_read_action / wire_write_action require action_id (params optional — some actions take none)', () => {
+    for (const name of ['wire_read_action', 'wire_write_action']) {
+      const wire = tools.find((t) => t.name === name)!
+      const schema = wire.inputSchema as { required?: string[] }
+      expect(schema.required).toEqual(['action_id'])
+    }
   })
 
   it('wire_discover requires q', () => {
@@ -102,6 +193,54 @@ describe('per-tool input schema spot checks', () => {
     const build = tools.find((t) => t.name === 'wire_build')!
     const schema = build.inputSchema as { required?: string[] }
     expect(schema.required).toEqual(expect.arrayContaining(['website_url', 'goal']))
+  })
+
+  it('monitor_create requires url and intervalMinutes (min 15)', () => {
+    const create = tools.find((t) => t.name === 'monitor_create')!
+    const schema = create.inputSchema as {
+      required?: string[]
+      properties?: Record<string, { minimum?: number }>
+    }
+    expect(schema.required).toEqual(expect.arrayContaining(['url', 'intervalMinutes']))
+    expect(schema.properties?.['intervalMinutes']?.minimum).toBe(15)
+  })
+
+  it('monitor_control requires id and a closed action enum', () => {
+    const control = tools.find((t) => t.name === 'monitor_control')!
+    const schema = control.inputSchema as {
+      required?: string[]
+      properties?: Record<string, { enum?: string[] }>
+    }
+    expect(schema.required).toEqual(expect.arrayContaining(['id', 'action']))
+    expect(schema.properties?.['action']?.enum).toEqual([
+      'pause',
+      'resume',
+      'run_now',
+      'delete',
+    ])
+  })
+
+  it('ai_visibility_search requires query', () => {
+    const search = tools.find((t) => t.name === 'ai_visibility_search')!
+    const schema = search.inputSchema as { required?: string[] }
+    expect(schema.required).toContain('query')
+  })
+
+  it('session_delete requires id', () => {
+    const del = tools.find((t) => t.name === 'session_delete')!
+    const schema = del.inputSchema as { required?: string[] }
+    expect(schema.required).toContain('id')
+  })
+
+  it('browser_task requires prompt and does NOT accept secret_values', () => {
+    const task = tools.find((t) => t.name === 'browser_task')!
+    const schema = task.inputSchema as {
+      required?: string[]
+      properties?: Record<string, unknown>
+    }
+    expect(schema.required).toContain('prompt')
+    // Deliberate omission: credentials must never transit the chat transcript.
+    expect(schema.properties).not.toHaveProperty('secret_values')
   })
 })
 
@@ -121,7 +260,7 @@ describe('dispatchTool', () => {
 
   it("catches handler errors and returns an MCP error envelope (doesn't throw)", async () => {
     // Replace the scrape tool's handler with one that throws to simulate a
-    // tool-internal failure (e.g., a network error from the underlying SDK).
+    // tool-internal failure (e.g., a network error from the underlying client).
     const scrape = tools.find((t) => t.name === 'scrape')!
     const originalHandler = scrape.handler
     scrape.handler = vi.fn(async () => {

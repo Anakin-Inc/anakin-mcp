@@ -37,17 +37,28 @@ If you prefer to edit config files yourself, see [Manual setup per client](#manu
 | `agentic_search` | Multi-source deep research (1–5 min). |
 | `wire_discover` | Find a Wire action for a task by natural-language intent. |
 | `wire_catalog` | Browse supported sites and a site's actions + param schemas. |
-| `wire_action` | Run a pre-built Wire action (read **or** write) and get its result. |
+| `wire_read_action` | Run a Wire **read** action (extracts data, no state change). |
+| `wire_write_action` | Run a Wire **write** action (state-changing; never payments). |
 | `wire_identities` | List saved accounts/credentials for auth-required actions. |
 | `wire_login` | Sign in to a credentials-mode site → `credential_id`. |
 | `wire_build` | Request a brand-new action for a site not yet in the catalog. |
+| `monitor_create` | Watch a page/site/Wire action on a schedule; alert on change. |
+| `monitor_list` | List your monitors (or fetch one by id). |
+| `monitor_changes` | Detected changes for a monitor. |
+| `monitor_control` | Pause / resume / run-now / delete a monitor. |
+| `ai_visibility_search` | Ask ChatGPT/Gemini/Google AI Overview the same question, compare answers. |
+| `ai_visibility_sources` | List available AI answer engines. |
+| `session_list` | List saved browser login sessions (ids for `sessionId` params). |
+| `session_delete` | Permanently delete a saved session. |
+| `browser_task` | Natural-language task in an AI-driven cloud browser (up to ~5 min). |
 
 **Wire** runs pre-built automation actions across hundreds of sites. Actions are
 **read** (extract listings, category products, prices, reviews, profiles,
-dashboard metrics) or **write** (log in, checkout, submit a form) — many read
-actions need no auth. The loop is: `wire_discover` (or `wire_catalog`) to find an
-`action_id`, then `wire_action` to run it; add a `credential_id` only when the
-action's auth mode is `required`.
+dashboard metrics) or **write** (log in, submit a form) — many read actions need
+no auth. The loop is: `wire_discover` (or `wire_catalog`) to find an `action_id`
+and its type, then `wire_read_action` or `wire_write_action` (matching the type)
+to run it; add a `credential_id` only when the action's auth mode is `required`.
+Payment execution and fund transfers are refused by policy.
 
 Each tool is a thin wrapper around the Anakin REST API — there is no scraping logic in this package, just MCP-protocol glue. The HTTP client is self-contained (`src/client.ts`); no runtime dependency on the [`@anakin-io/sdk`](https://github.com/Anakin-Inc/anakin-node) Node SDK.
 
