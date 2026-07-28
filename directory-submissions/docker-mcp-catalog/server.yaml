@@ -1,0 +1,32 @@
+name: anakin
+type: remote
+meta:
+  category: web
+  tags:
+    - web-scraping
+    - search
+    - crawling
+    - research
+    - monitoring
+    - browser-automation
+about:
+  title: Anakin
+  description: >-
+    Web data for AI agents: scrape any URL to clean markdown or structured
+    JSON, run AI-native search and multi-source deep research, execute
+    pre-built read/write actions across hundreds of popular websites, watch
+    pages for changes on a schedule, and drive a real cloud browser from
+    natural language.
+  icon: https://anakin.io/logo-square.png
+remote:
+  transport_type: streamable-http
+  url: https://mcp.anakin.io/mcp
+oauth:
+  authorization_url: https://anakin.io/oauth/auth
+  token_url: https://anakin.io/oauth/token
+  # Verified live against https://anakin.io/.well-known/oauth-authorization-server
+  # (2026-07-27) — the resource server's own protected-resource metadata at
+  # https://mcp.anakin.io/.well-known/oauth-protected-resource points here.
+source:
+  project_url: https://github.com/Anakin-Inc/anakin-mcp
+  license: Apache-2.0

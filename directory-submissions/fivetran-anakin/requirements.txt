@@ -1,0 +1,2 @@
+# requests is pre-installed by the Fivetran Connector SDK base environment —
+# no external dependencies needed for this connector.

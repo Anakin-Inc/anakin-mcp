@@ -1,0 +1,5 @@
+{
+  "api_key": "<YOUR_ANAKIN_API_KEY>",
+  "search_prompt": "<YOUR_SEARCH_QUERY>",
+  "search_limit": "5"
+}

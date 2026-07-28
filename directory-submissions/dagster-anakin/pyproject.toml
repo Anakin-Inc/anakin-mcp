@@ -1,0 +1,27 @@
+[project]
+name = "dagster-anakin"
+description = "Dagster integration with Anakin"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "dagster>=1.8.0",
+    "anakin-sdk>=0.1.0",
+]
+dynamic = ["version"]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest",
+    "ty==0.0.37",
+]
+
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["dagster_anakin"]
+
+[tool.setuptools.dynamic]
+version = {attr = "dagster_anakin.__version__"}

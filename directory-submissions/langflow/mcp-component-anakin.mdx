@@ -1,0 +1,24 @@
+---
+title: Connect an Anakin MCP server to Langflow
+slug: /mcp-component-anakin
+---
+
+[Anakin](https://anakin.io) is a hosted MCP server for web scraping, search,
+crawling, and deep research — 21 tools over Streamable HTTP with OAuth 2.1.
+
+## Prerequisites
+
+A free Anakin API key: [anakin.io/dashboard](https://anakin.io/dashboard),
+500 credits, no card required.
+
+## Add the server
+
+1. In your flow, add an **MCP Tools** component.
+2. Set **Mode** to `HTTP/SSE`.
+3. **URL**: `https://mcp.anakin.io/mcp`
+4. Complete the OAuth 2.1 login when prompted — Langflow's MCP client
+   handles the authorization-code flow and Anakin mints a scoped, revocable
+   key for the connection.
+5. Select the tools you want the flow to use (`scrape`, `search`,
+   `agentic_search`, the `wire_*` family, `monitor_*`, `browser_task`, etc.)
+   from the component's tool list.
