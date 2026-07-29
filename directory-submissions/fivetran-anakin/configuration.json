@@ -1,0 +1,8 @@
+{
+  "api_key": "<YOUR_ANAKIN_API_KEY>",
+  "search_prompt": "<YOUR_SEARCH_QUERY>",
+  "search_limit": "5",
+  "wire_discover_query": "",
+  "wire_discover_limit": "5",
+  "session_domain": ""
+}

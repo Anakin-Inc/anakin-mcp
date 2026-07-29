@@ -1,0 +1,360 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Anakin (Independent Publisher)",
+    "description": "Anakin turns any website into clean markdown or AI-extracted structured JSON — web scraping, AI-powered search, and multi-stage agentic research over hundreds of popular sites. Get a free API key at https://anakin.io/dashboard (300 credits, no card required).",
+    "version": "1.0",
+    "contact": {
+      "name": "Anakin",
+      "url": "https://anakin.io",
+      "email": "support@anakin.io"
+    }
+  },
+  "host": "api.anakin.io",
+  "basePath": "/v1",
+  "schemes": [
+    "https"
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/url-scraper": {
+      "post": {
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "jobId": {
+                  "type": "string",
+                  "description": "The job ID — pass to Get Scrape Result to poll for completion.",
+                  "title": "Job ID"
+                },
+                "status": {
+                  "type": "string",
+                  "title": "Status"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Extract Website Data",
+        "description": "Submit a URL to scrape. Returns a job ID — use Get Scrape Result (with a Delay in between) to fetch the completed markdown/JSON.",
+        "operationId": "ScrapeUrl",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "description": "The full URL of the website to extract data from.",
+                  "title": "URL"
+                },
+                "generateJson": {
+                  "type": "boolean",
+                  "description": "AI-extract structured JSON from the page content.",
+                  "title": "Generate JSON",
+                  "default": false
+                },
+                "country": {
+                  "type": "string",
+                  "description": "Proxy country code, e.g. us, gb, de.",
+                  "title": "Country",
+                  "default": "us"
+                },
+                "useBrowser": {
+                  "type": "boolean",
+                  "description": "Use a headless browser — best for JS-heavy sites.",
+                  "title": "Use Browser",
+                  "default": false
+                },
+                "forceFresh": {
+                  "type": "boolean",
+                  "description": "Bypass the cache and force a fresh extraction.",
+                  "title": "Force Fresh",
+                  "default": false
+                }
+              },
+              "required": [
+                "url"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/url-scraper/{jobId}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "default",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "title": "Job ID"
+                },
+                "status": {
+                  "type": "string",
+                  "title": "Status"
+                },
+                "markdown": {
+                  "type": "string",
+                  "title": "Markdown"
+                },
+                "generatedJson": {
+                  "type": "object",
+                  "title": "Generated JSON"
+                },
+                "cached": {
+                  "type": "boolean",
+                  "title": "Cached"
+                },
+                "durationMs": {
+                  "type": "integer",
+                  "format": "int32",
+                  "title": "Duration (ms)"
+                },
+                "error": {
+                  "type": "string",
+                  "title": "Error"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get Scrape Result",
+        "description": "Fetch the status and results of a scrape job started by Extract Website Data.",
+        "operationId": "GetScrapeResult",
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "description": "The jobId returned by Extract Website Data.",
+            "x-ms-summary": "Job ID"
+          }
+        ]
+      }
+    },
+    "/search": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "default",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "title": "Search ID"
+                },
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string",
+                        "title": "URL"
+                      },
+                      "title": {
+                        "type": "string",
+                        "title": "Title"
+                      },
+                      "snippet": {
+                        "type": "string",
+                        "title": "Snippet"
+                      },
+                      "date": {
+                        "type": "string",
+                        "title": "Date"
+                      }
+                    }
+                  },
+                  "title": "Results"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Perform AI Search",
+        "description": "AI-powered web search with citations. Synchronous — returns immediately, no polling needed.",
+        "operationId": "Search",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string",
+                  "description": "The search query or question.",
+                  "title": "Search Query"
+                },
+                "limit": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Maximum number of results to return (default 5, max 20).",
+                  "title": "Max Results",
+                  "default": 5
+                }
+              },
+              "required": [
+                "prompt"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/agentic-search": {
+      "post": {
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "job_id": {
+                  "type": "string",
+                  "title": "Job ID"
+                },
+                "status": {
+                  "type": "string",
+                  "title": "Status"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Start Agentic Search",
+        "description": "Start a multi-stage AI research pipeline: search, scrape citations, extract structured data. Returns a job ID — use Get Agentic Search Result (with a Delay in between, this can take minutes) to fetch the report.",
+        "operationId": "AgenticSearch",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string",
+                  "description": "The research question or topic (max 8KB).",
+                  "title": "Research Prompt"
+                },
+                "useBrowser": {
+                  "type": "boolean",
+                  "description": "Use a headless browser for citation scraping — matches the API default.",
+                  "title": "Use Browser",
+                  "default": true
+                }
+              },
+              "required": [
+                "prompt"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/agentic-search/{jobId}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "default",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "title": "Job ID"
+                },
+                "status": {
+                  "type": "string",
+                  "title": "Status"
+                },
+                "generatedJson": {
+                  "type": "object",
+                  "properties": {
+                    "summary": {
+                      "type": "string",
+                      "title": "Summary"
+                    },
+                    "structured_data": {
+                      "type": "object",
+                      "title": "Structured Data"
+                    },
+                    "data_schema": {
+                      "type": "object",
+                      "title": "Data Schema"
+                    }
+                  },
+                  "title": "Generated JSON"
+                },
+                "durationMs": {
+                  "type": "integer",
+                  "format": "int32",
+                  "title": "Duration (ms)"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get Agentic Search Result",
+        "description": "Fetch the status and results of an agentic search job started by Start Agentic Search.",
+        "operationId": "GetAgenticSearchResult",
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "description": "The job_id returned by Start Agentic Search.",
+            "x-ms-summary": "Job ID"
+          }
+        ]
+      }
+    }
+  },
+  "definitions": {},
+  "parameters": {},
+  "responses": {},
+  "securityDefinitions": {
+    "api_key": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "X-API-Key"
+    }
+  },
+  "security": [],
+  "tags": [],
+  "x-ms-connector-metadata": [
+    {
+      "propertyName": "Website",
+      "propertyValue": "https://anakin.io"
+    },
+    {
+      "propertyName": "Privacy policy",
+      "propertyValue": "https://anakin.io/privacy"
+    },
+    {
+      "propertyName": "Categories",
+      "propertyValue": "AI;Website"
+    }
+  ]
+}

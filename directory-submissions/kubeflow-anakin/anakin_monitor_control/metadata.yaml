@@ -1,0 +1,17 @@
+---
+name: anakin_monitor_control
+stability: alpha  # New component without proven track record
+dependencies:
+  kubeflow:
+    - name: Pipelines
+      version: '>=2.15.2'
+  external_services:
+    - name: Anakin API
+      version: "v1"
+tags:
+  - monitoring
+  - alerting
+lastVerified: 2026-07-29T00:00:00Z
+links:
+  docs: https://anakin.io/docs
+  dashboard: https://anakin.io/dashboard
