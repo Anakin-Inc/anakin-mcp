@@ -55,6 +55,23 @@ const wireDiscoverTool: AnakinTool = {
     required: ['q'],
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    description: 'Ranked candidate Wire actions for the given intent.',
+    properties: {
+      results: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: true,
+          description:
+            'A candidate action — action_id, type (read/write), required/optional params, credit cost, whether auth is needed.',
+        },
+      },
+      next: { type: 'string', description: 'Suggested next call.' },
+    },
+    additionalProperties: false,
+  },
   handler: async (client, args) => {
     const q = String(args['q'])
     const limit = typeof args['limit'] === 'number' ? args['limit'] : undefined
@@ -82,6 +99,12 @@ const wireCatalogTool: AnakinTool = {
       },
     },
     additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    description:
+      "With no slug: every supported catalog and its action count. With a slug: that catalog's full action list (each action's id, type, parameter schema, auth mode, credit cost) plus login fields for credentials-mode sites.",
+    additionalProperties: true,
   },
   handler: async (client, args) => {
     const slug = typeof args['slug'] === 'string' ? args['slug'] : undefined
@@ -123,6 +146,29 @@ const wireActionInputSchema = {
   additionalProperties: false,
 }
 
+/** Shared output schema for wire_read_action / wire_write_action. */
+const wireJobOutputSchema = {
+  type: 'object' as const,
+  properties: {
+    status: { type: 'string', enum: ['processing', 'completed', 'failed'] },
+    retry_after_ms: {
+      type: 'integer',
+      description: "Present while processing — server's suggested poll delay.",
+    },
+    data: {
+      type: 'object',
+      additionalProperties: true,
+      description: "Present when completed — the action's extracted/returned data.",
+    },
+    credits_used: { type: 'number' },
+    execution_ms: { type: 'number' },
+  },
+  required: ['status'],
+  // Sync actions may return extra top-level fields inline (their result data,
+  // not nested under `data`) — see AnakinClient.wireRun.
+  additionalProperties: true,
+}
+
 /** Shared execution path for wire_read_action / wire_write_action. */
 async function runWireAction(
   client: Parameters<AnakinTool['handler']>[0],
@@ -162,6 +208,7 @@ const wireReadActionTool: AnakinTool = {
     openWorldHint: true,
   },
   inputSchema: wireActionInputSchema,
+  outputSchema: wireJobOutputSchema,
   handler: runWireAction,
 }
 
@@ -176,6 +223,7 @@ const wireWriteActionTool: AnakinTool = {
     openWorldHint: true,
   },
   inputSchema: wireActionInputSchema,
+  outputSchema: wireJobOutputSchema,
   handler: async (client, args) => {
     const actionId = String(args['action_id'])
     const params = (args['params'] ?? {}) as Record<string, unknown>
@@ -204,6 +252,11 @@ const wireIdentitiesTool: AnakinTool = {
       },
     },
     additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    description: 'Your saved Wire identities and their credentials (id, status, catalog).',
+    additionalProperties: true,
   },
   handler: async (client, args) => {
     const catalogId = typeof args['catalog_id'] === 'string' ? args['catalog_id'] : undefined
@@ -253,6 +306,11 @@ const wireLoginTool: AnakinTool = {
     },
     required: ['catalog_slug'],
     additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    description: 'The resulting identity and credential.',
+    additionalProperties: true,
   },
   handler: async (client, args) => {
     const body: Parameters<typeof client.wireLogin>[0] = {
@@ -313,6 +371,16 @@ const wireBuildTool: AnakinTool = {
     },
     required: ['website_url', 'goal'],
     additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      status: {
+        type: 'string',
+        description: 'e.g. "pending" — the build runs asynchronously.',
+      },
+    },
+    additionalProperties: true,
   },
   handler: async (client, args) => {
     const websiteUrl = String(args['website_url'])

@@ -55,6 +55,24 @@ export const scrapeTool: AnakinTool = {
     required: ['url'],
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    description:
+      'The extracted page. markdown is always present; generatedJson is present only when generateJson was true.',
+    properties: {
+      url: { type: 'string' },
+      markdown: { type: 'string', description: 'Clean markdown of the page.' },
+      generatedJson: {
+        type: 'object',
+        additionalProperties: true,
+        description: 'AI-extracted structured JSON — present only when generateJson was true.',
+      },
+      cached: { type: 'boolean', description: 'Whether this result was served from cache.' },
+      durationMs: { type: 'integer' },
+    },
+    required: ['url', 'markdown', 'cached', 'durationMs'],
+    additionalProperties: false,
+  },
   handler: async (client, args) => {
     const url = String(args['url'])
     const generateJson = Boolean(args['generateJson'])
@@ -83,6 +101,11 @@ export const scrapeTool: AnakinTool = {
       })
     }
 
-    return ok(doc.markdown ?? '')
+    return ok(doc.markdown ?? '', {
+      url: doc.url,
+      markdown: doc.markdown ?? '',
+      cached: doc.cached,
+      durationMs: doc.durationMs,
+    })
   },
 }

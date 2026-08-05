@@ -65,6 +65,33 @@ export const crawlTool: AnakinTool = {
     required: ['url'],
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      url: { type: 'string' },
+      totalPages: { type: 'integer' },
+      completedPages: { type: 'integer' },
+      pages: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            url: { type: 'string' },
+            status: { type: 'string', enum: ['completed', 'failed'] },
+            markdown: { type: 'string' },
+            html: { type: 'string' },
+            durationMs: { type: 'integer' },
+            error: { type: 'string' },
+          },
+          required: ['url', 'status', 'durationMs'],
+          additionalProperties: false,
+        },
+      },
+      durationMs: { type: 'integer' },
+    },
+    required: ['url', 'totalPages', 'completedPages', 'pages', 'durationMs'],
+    additionalProperties: false,
+  },
   handler: async (client, args) => {
     const url = String(args['url'])
 

@@ -25,6 +25,15 @@ import { browserTaskTool } from './browser-task.js'
 
 export interface ToolContent {
   content: Array<{ type: 'text'; text: string }>
+  /**
+   * Machine-readable mirror of `content`, validated by clients against the
+   * tool's `outputSchema`. Per the MCP spec, `content` stays authoritative
+   * for display/back-compat; `structuredContent` is additive. Only ever an
+   * object — CallToolResult requires the root to be a JSON object, so array
+   * results (e.g. a list) are wrapped (e.g. `{ items: [...] }`) rather than
+   * returned bare.
+   */
+  structuredContent?: Record<string, unknown>
   isError?: boolean
   // MCP's CallToolResult schema declares an index signature for forward
   // compatibility with future fields. Mirroring it here keeps assignment
@@ -36,6 +45,13 @@ export interface AnakinTool {
   name: string
   description: string
   inputSchema: Record<string, unknown>
+  /**
+   * JSON Schema for `structuredContent` on a successful (non-error) result.
+   * Required by the Connectors/Smithery directories so clients can validate
+   * and render tool results without re-deriving the shape from prose. Error
+   * results (`isError: true`) are exempt — they carry a plain-text message.
+   */
+  outputSchema: Record<string, unknown>
   /**
    * MCP tool annotations advertised to the client. Anthropic's Connectors
    * Directory REQUIRES every tool to carry a `title` plus a safety hint:
@@ -141,12 +157,28 @@ function capToolText(text: string): string {
   )
 }
 
-/** Helper to wrap a string result in MCP's content envelope. */
-export function ok(text: string): ToolContent {
-  return { content: [{ type: 'text', text: capToolText(text) }] }
+/**
+ * Helper to wrap a string result in MCP's content envelope. `structured`
+ * (when the caller has it on hand) is attached as `structuredContent`
+ * alongside the text — used by tools whose primary content is prose (e.g.
+ * scrape's markdown) but that still want to advertise an outputSchema.
+ */
+export function ok(text: string, structured?: Record<string, unknown>): ToolContent {
+  const result: ToolContent = { content: [{ type: 'text', text: capToolText(text) }] }
+  if (structured !== undefined) result.structuredContent = structured
+  return result
 }
 
-/** Helper to JSON-stringify a result for tool output. */
+/**
+ * Helper to JSON-stringify a result for tool output. Also sets
+ * `structuredContent` when `value` is a plain object — CallToolResult
+ * requires an object root, so a bare array/primitive is text-only (callers
+ * returning a list wrap it first, e.g. `okJson({ items: list })`).
+ */
 export function okJson(value: unknown): ToolContent {
-  return ok(JSON.stringify(value, null, 2))
+  const result = ok(JSON.stringify(value, null, 2))
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    result.structuredContent = value as Record<string, unknown>
+  }
+  return result
 }

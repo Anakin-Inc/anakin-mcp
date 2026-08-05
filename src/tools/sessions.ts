@@ -35,10 +35,31 @@ const sessionListTool: AnakinTool = {
     },
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      sessions: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Pass as sessionId/session_id elsewhere.' },
+            domain: { type: 'string', description: 'The website domain this session is authenticated for.' },
+          },
+          required: ['id'],
+          additionalProperties: true,
+        },
+      },
+    },
+    required: ['sessions'],
+    additionalProperties: false,
+  },
   handler: async (client, args) => {
     const domain = typeof args['domain'] === 'string' ? args['domain'] : undefined
     const result = await client.sessionsList(domain)
-    return okJson(result)
+    // client.sessionsList() resolves to an array; CallToolResult.
+    // structuredContent must be an object root, so it's wrapped rather than bare.
+    return okJson({ sessions: result })
   },
 }
 
@@ -62,6 +83,11 @@ const sessionDeleteTool: AnakinTool = {
     },
     required: ['id'],
     additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    description: 'Confirmation of deletion.',
+    additionalProperties: true,
   },
   handler: async (client, args) => {
     const result = await client.sessionDelete(String(args['id']))

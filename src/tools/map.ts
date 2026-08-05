@@ -62,6 +62,19 @@ export const mapTool: AnakinTool = {
     required: ['url'],
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      url: { type: 'string' },
+      links: { type: 'array', items: { type: 'string' } },
+      totalLinks: { type: 'integer' },
+      externalLinks: { type: 'array', items: { type: 'string' } },
+      totalExternalLinks: { type: 'integer' },
+      durationMs: { type: 'integer' },
+    },
+    required: ['url', 'links', 'totalLinks', 'externalLinks', 'totalExternalLinks', 'durationMs'],
+    additionalProperties: false,
+  },
   handler: async (client, args) => {
     const url = String(args['url'])
 

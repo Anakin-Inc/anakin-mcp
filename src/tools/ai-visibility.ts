@@ -55,6 +55,29 @@ const aiVisibilitySearchTool: AnakinTool = {
     required: ['query'],
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      search_id: { type: 'string' },
+      status: { type: 'string', enum: ['running', 'completed', 'failed'] },
+      country: { type: 'string' },
+      synthesis: {
+        type: 'string',
+        description: 'AI-generated synthesis of where the engines agree and diverge.',
+      },
+      results: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: true,
+          description:
+            'One entry per engine — status, answer summary (full_content included only if include_full_content was true), latency, credits used, and a consensus/outlier verdict.',
+        },
+      },
+    },
+    required: ['search_id', 'status', 'results'],
+    additionalProperties: false,
+  },
   handler: async (client, args) => {
     const query = String(args['query'])
 
@@ -97,9 +120,27 @@ const aiVisibilitySourcesTool: AnakinTool = {
     properties: {},
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      sources: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { slug: { type: 'string' }, label: { type: 'string' } },
+          required: ['slug', 'label'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['sources'],
+    additionalProperties: false,
+  },
   handler: async (client) => {
     const result = await client.aiVisibilitySources()
-    return okJson(result)
+    // client.aiVisibilitySources() resolves to an array; CallToolResult.
+    // structuredContent must be an object root, so it's wrapped rather than bare.
+    return okJson({ sources: result })
   },
 }
 

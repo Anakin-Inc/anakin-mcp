@@ -71,6 +71,22 @@ export const browserTaskTool: AnakinTool = {
     required: ['prompt'],
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean' },
+      result: {
+        description:
+          'The task result — structured JSON matching output_schema if it was supplied, otherwise a free-form value.',
+      },
+      steps_taken: { type: 'integer' },
+      iterations: { type: 'integer' },
+      cached: { type: 'boolean' },
+      duration_ms: { type: 'integer' },
+      run_id: { type: 'string' },
+    },
+    additionalProperties: false,
+  },
   handler: async (client, args) => {
     const prompt = String(args['prompt'])
     const url = typeof args['url'] === 'string' ? args['url'] : undefined

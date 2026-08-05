@@ -23,6 +23,22 @@ import { okJson } from './index.js'
 const SECRET_KEYS = new Set(['alertWebhookSecret'])
 const REDACTED = '[redacted — view in the Anakin dashboard]'
 
+/** Shared output schema for the monitor_* tools that return a Monitor. */
+const monitorFields = {
+  id: { type: 'string' as const },
+  url: { type: 'string' as const },
+  intervalMinutes: { type: 'integer' as const },
+  scope: { type: 'string' as const, enum: ['page', 'site', 'wire'] },
+  watchMode: { type: 'string' as const, enum: ['full_page', 'specific_data'] },
+  watchFormat: { type: 'string' as const, enum: ['markdown', 'html', 'cleaned_html'] },
+  isActive: { type: 'boolean' as const },
+  alertWebhookSecret: {
+    type: 'string' as const,
+    description:
+      'Always redacted before being returned — retrieve the real value from the Anakin dashboard.',
+  },
+}
+
 /** Deep-copy `value` with any secret-bearing keys replaced. */
 export function redactSecrets(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactSecrets)
@@ -179,6 +195,11 @@ const monitorCreateTool: AnakinTool = {
     required: ['url', 'intervalMinutes'],
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    properties: monitorFields,
+    additionalProperties: true,
+  },
   handler: async (client, args) => {
     const url = String(args['url'])
     const intervalMinutes = Number(args['intervalMinutes'])
@@ -238,12 +259,29 @@ const monitorListTool: AnakinTool = {
     },
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    description:
+      'A single monitor (when id is given) or the full list wrapped as { monitors: [...] } (when id is omitted).',
+    properties: {
+      ...monitorFields,
+      monitors: {
+        type: 'array',
+        items: { type: 'object', properties: monitorFields, additionalProperties: true },
+        description: 'Present when id was omitted — every monitor, each shaped like the fields above.',
+      },
+    },
+    additionalProperties: true,
+  },
   handler: async (client, args) => {
-    const result =
-      typeof args['id'] === 'string'
-        ? await client.monitorGet(args['id'])
-        : await client.monitorList()
-    return okJson(redactSecrets(result))
+    const hasId = typeof args['id'] === 'string'
+    const result = hasId
+      ? await client.monitorGet(args['id'] as string)
+      : await client.monitorList()
+    const redacted = redactSecrets(result)
+    // client.monitorList() resolves to an array; CallToolResult.structuredContent
+    // must be an object root, so the list form is wrapped rather than bare.
+    return okJson(hasId ? redacted : { monitors: redacted })
   },
 }
 
@@ -266,6 +304,12 @@ const monitorChangesTool: AnakinTool = {
     },
     required: ['id'],
     additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    description:
+      'Detected changes for the monitor — typically { changes: [...] }, each entry recording when the watched content differed, with a diff/summary (and the AI change summary when aiMode is on).',
+    additionalProperties: true,
   },
   handler: async (client, args) => {
     const result = await client.monitorChanges(String(args['id']))
@@ -298,6 +342,11 @@ const monitorControlTool: AnakinTool = {
     },
     required: ['id', 'action'],
     additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    description: 'Confirmation of the requested monitor state change.',
+    additionalProperties: true,
   },
   handler: async (client, args) => {
     const id = String(args['id'])

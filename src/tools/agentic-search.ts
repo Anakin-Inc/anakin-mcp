@@ -33,6 +33,27 @@ export const agenticSearchTool: AnakinTool = {
     required: ['prompt'],
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      status: { type: 'string', enum: ['completed', 'failed'] },
+      summary: { type: 'string', description: 'AI-written summary of the research findings.' },
+      structured_data: {
+        type: 'object',
+        additionalProperties: true,
+        description: "Structured data matching the request's optional/inferred schema.",
+      },
+      data_schema: {
+        type: 'object',
+        additionalProperties: true,
+        description: 'Echo of the schema used to extract structured_data.',
+      },
+      cached: { type: 'boolean' },
+    },
+    required: ['id', 'status'],
+    additionalProperties: false,
+  },
   handler: async (client, args) => {
     const prompt = String(args['prompt'])
 

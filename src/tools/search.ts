@@ -28,6 +28,28 @@ export const searchTool: AnakinTool = {
     required: ['prompt'],
     additionalProperties: false,
   },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      results: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            url: { type: 'string' },
+            title: { type: 'string' },
+            snippet: { type: 'string' },
+            date: { type: 'string' },
+          },
+          required: ['url'],
+          additionalProperties: false,
+        },
+      },
+      count: { type: 'integer' },
+    },
+    required: ['results', 'count'],
+    additionalProperties: false,
+  },
   handler: async (client, args) => {
     const prompt = String(args['prompt'])
     const limit = typeof args['limit'] === 'number' ? args['limit'] : 5
