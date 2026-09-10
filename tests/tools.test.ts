@@ -291,3 +291,87 @@ describe('ok / okJson helpers', () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual({ a: 1, b: [2, 3] })
   })
 })
+
+describe('wire_build catalog-build shape', () => {
+  const build = () => tools.find((t) => t.name === 'wire_build')!
+
+  it('accepts actions, country, and credential (credential requires type)', () => {
+    const schema = build().inputSchema as {
+      properties: Record<string, Record<string, unknown>>
+    }
+    expect(schema.properties['actions']?.['type']).toBe('array')
+    expect(schema.properties['country']?.['type']).toBe('string')
+    const cred = schema.properties['credential'] as {
+      required?: string[]
+      properties?: Record<string, { enum?: string[] }>
+      additionalProperties?: boolean
+    }
+    expect(cred.required).toEqual(['type'])
+    expect(cred.properties?.['type']?.enum).toEqual(['plain', 'vault'])
+    expect(cred.additionalProperties).toBe(false)
+  })
+
+  it('forwards actions, country, and credential to the API', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi
+      .spyOn(client, 'wireBuild')
+      .mockResolvedValue({ status: 'ok', build_request: { id: 'br1', status: 'pending' } })
+
+    const credential = {
+      type: 'plain',
+      username: 'user@example.com',
+      password: 'pw',
+      login_url: 'https://example.com/login',
+    }
+    const result = await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'read product details',
+      actions: ['search products', 'get product details'],
+      country: 'US',
+      credential,
+    })
+
+    expect(spy).toHaveBeenCalledWith({
+      website_url: 'https://example.com',
+      goal: 'read product details',
+      actions: ['search products', 'get product details'],
+      country: 'US',
+      credential,
+    })
+    expect(result.isError).toBeUndefined()
+    vi.restoreAllMocks()
+  })
+
+  it('omits the new fields entirely when not given (back-compat body)', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi
+      .spyOn(client, 'wireBuild')
+      .mockResolvedValue({ status: 'ok', build_request: { id: 'br2', status: 'pending' } })
+
+    await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'read product details',
+    })
+
+    expect(spy).toHaveBeenCalledWith({
+      website_url: 'https://example.com',
+      goal: 'read product details',
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('financial block also scans the actions list', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi.spyOn(client, 'wireBuild')
+
+    const result = await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'automate my account',
+      actions: ['transfer funds to another account'],
+    })
+
+    expect(result.isError).toBe(true)
+    expect(spy).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+  })
+})

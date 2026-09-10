@@ -615,12 +615,29 @@ export interface WireLoginRequest {
   source_ref?: Record<string, unknown>
 }
 
+/**
+ * Login credential attached to a build request. Mirrors the engine's
+ * BuildCredentialInput: exactly one shape per `type` — plain carries
+ * username/password, vault points at a connected identity-source entry.
+ */
+export interface WireBuildCredential {
+  type: 'plain' | 'vault'
+  username?: string
+  password?: string
+  source_id?: string
+  source_ref?: Record<string, unknown>
+  login_url?: string
+}
+
 export interface WireBuildRequest {
   website_url: string
   goal: string
   catalog_id?: string
   visibility?: 'private' | 'public'
   force?: boolean
+  actions?: string[]
+  country?: string
+  credential?: WireBuildCredential
 }
 
 // ── Website Monitoring ──────────────────────────────────────────────────

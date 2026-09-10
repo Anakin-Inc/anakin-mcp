@@ -333,7 +333,7 @@ const wireLoginTool: AnakinTool = {
 const wireBuildTool: AnakinTool = {
   name: 'wire_build',
   description:
-    "Request a brand-new Wire action for a website that isn't in the catalog yet. Describe the site (`website_url`) and what the action should do or extract (`goal`); Wire generates and auto-tests a scraper, then publishes it. Asynchronous (returns status \"pending\") and charges credits, refunded automatically if the build fails. Only use this after wire_discover / wire_catalog confirm no existing action covers the site.",
+    "Request brand-new Wire actions for a website that isn't in the catalog yet — a full catalog build. Describe the site (`website_url`) and what to build (`goal`); optionally list the discrete capabilities as `actions` (each becomes its own action), pin the proxy exit `country`, and attach a login `credential` to build actions behind a sign-in. Wire generates and auto-tests the scrapers, then publishes them. Asynchronous — the response's `build_request` carries an `id` and status \"pending\"; when it completes, its `skipped` list names anything the build could not deliver. Charges credits (login builds cost significantly more than public builds), refunded automatically if the build fails. Only use this after wire_discover / wire_catalog confirm no existing action covers the site.",
   annotations: {
     title: 'Build a new Wire action',
     // Spends credits and publishes a new catalog action (a side effect) → prompt.
@@ -368,6 +368,43 @@ const wireBuildTool: AnakinTool = {
           'Build even if similar actions already exist for the domain (otherwise the request is rejected with ACTION_EXISTS).',
         default: false,
       },
+      actions: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Optional list of discrete capabilities to build, each as its own action (e.g. ["search products", "get product details"]). Omit to let the builder infer them from `goal`.',
+      },
+      country: {
+        type: 'string',
+        description:
+          'Optional 2-letter country code (e.g. "US") — the scraper is built and tested through an exit IP in that country. Use when the site geo-gates its content.',
+      },
+      credential: {
+        type: 'object',
+        description:
+          'Optional login credential, for building actions behind a sign-in (a login build — costs significantly more credits than a public build). Plain shape: { type: "plain", username, password }. Vault shape (an entry in a connected 1Password/Azure identity source): { type: "vault", source_id, source_ref }. Either shape may add `login_url` when the login form lives somewhere other than website_url. The password is used once by the builder to sign in and is never stored.',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['plain', 'vault'],
+            description: '"plain" for a typed username/password, "vault" for a connected identity-source entry.',
+          },
+          username: { type: 'string', description: 'Plain shape — the account username or email.' },
+          password: { type: 'string', description: 'Plain shape — the account password. Never stored.' },
+          source_id: { type: 'string', description: 'Vault shape — the connected identity-source ID.' },
+          source_ref: {
+            type: 'object',
+            description: 'Vault shape — locator of the entry inside the source.',
+            additionalProperties: true,
+          },
+          login_url: {
+            type: 'string',
+            description: "Where the site's login form lives, when it differs from website_url.",
+          },
+        },
+        required: ['type'],
+        additionalProperties: false,
+      },
     },
     required: ['website_url', 'goal'],
     additionalProperties: false,
@@ -375,9 +412,12 @@ const wireBuildTool: AnakinTool = {
   outputSchema: {
     type: 'object',
     properties: {
-      status: {
-        type: 'string',
-        description: 'e.g. "pending" — the build runs asynchronously.',
+      status: { type: 'string', description: '"ok" on acceptance.' },
+      build_request: {
+        type: 'object',
+        description:
+          'The created build request — its `id` and `status` ("pending") track the asynchronous build; once finished, `skipped` names anything the build could not deliver.',
+        additionalProperties: true,
       },
     },
     additionalProperties: true,
@@ -385,8 +425,13 @@ const wireBuildTool: AnakinTool = {
   handler: async (client, args) => {
     const websiteUrl = String(args['website_url'])
     const goal = String(args['goal'])
+    const actions = Array.isArray(args['actions'])
+      ? (args['actions'] as unknown[]).filter((a): a is string => typeof a === 'string')
+      : undefined
     // Don't build payment/transfer actions either — keep the catalog compliant.
-    const blocked = financialBlockReason(`${goal} ${websiteUrl}`)
+    const blocked = financialBlockReason(
+      `${goal} ${websiteUrl}${actions?.length ? ` ${actions.join(' ')}` : ''}`,
+    )
     if (blocked) return { isError: true, content: [{ type: 'text', text: blocked }] }
 
     const body: Parameters<typeof client.wireBuild>[0] = {
@@ -398,6 +443,13 @@ const wireBuildTool: AnakinTool = {
       body.visibility = args['visibility']
     }
     if (typeof args['force'] === 'boolean') body.force = args['force']
+    if (actions?.length) body.actions = actions
+    if (typeof args['country'] === 'string') body.country = args['country']
+    if (typeof args['credential'] === 'object' && args['credential'] !== null) {
+      body.credential = args['credential'] as NonNullable<
+        Parameters<typeof client.wireBuild>[0]['credential']
+      >
+    }
 
     const result = await client.wireBuild(body)
     return okJson(result)
