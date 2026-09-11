@@ -344,6 +344,27 @@ export class AnakinClient {
     return await this.request<unknown>('POST', '/wire/build-request', body)
   }
 
+  /** One build request: status, published actions, step events, skips. */
+  async wireBuildStatus(id: string): Promise<unknown> {
+    return await this.request<unknown>(
+      'GET',
+      `/wire/build-requests/${encodeURIComponent(id)}`,
+    )
+  }
+
+  /** The caller's build requests, newest first, optionally filtered by status. */
+  async wireBuildList(
+    options: { status?: string; limit?: number } = {},
+  ): Promise<unknown> {
+    return await this.request<unknown>(
+      'GET',
+      withQuery('/wire/build-requests', {
+        status: options.status,
+        limit: options.limit,
+      }),
+    )
+  }
+
   // ── Website Monitoring ────────────────────────────────────────────────
 
   async monitorCreate(

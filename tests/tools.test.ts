@@ -37,6 +37,7 @@ const EXPECTED_TOOL_NAMES = [
   'wire_identities',
   'wire_login',
   'wire_build',
+  'wire_build_status',
   'monitor_create',
   'monitor_list',
   'monitor_changes',
@@ -372,6 +373,58 @@ describe('wire_build catalog-build shape', () => {
 
     expect(result.isError).toBe(true)
     expect(spy).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+  })
+})
+
+describe('wire_build_status tool', () => {
+  it('detail mode fetches by id and strips the verbose events log by default', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi.spyOn(client, 'wireBuildStatus').mockResolvedValue({
+      status: 'ok',
+      build_request: { id: 'br1', status: 'success', skipped: [] },
+      actions: [{ action_id: 'act_1', status: 'active' }],
+      events: [{ step: 'noisy' }],
+      catalog_slug: 'example',
+    })
+
+    const result = await dispatchTool(client, 'wire_build_status', { id: 'br1' })
+
+    expect(spy).toHaveBeenCalledWith('br1')
+    expect(result.isError).toBeUndefined()
+    const payload = JSON.parse(result.content[0]!.text)
+    expect(payload.build_request.id).toBe('br1')
+    expect(payload.actions[0].action_id).toBe('act_1')
+    expect(payload).not.toHaveProperty('events')
+    vi.restoreAllMocks()
+  })
+
+  it('detail mode keeps events when include_events is true', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    vi.spyOn(client, 'wireBuildStatus').mockResolvedValue({
+      status: 'ok',
+      build_request: { id: 'br1', status: 'processing' },
+      events: [{ step: 'fetching page' }],
+    })
+
+    const result = await dispatchTool(client, 'wire_build_status', {
+      id: 'br1',
+      include_events: true,
+    })
+    const payload = JSON.parse(result.content[0]!.text)
+    expect(payload.events).toEqual([{ step: 'fetching page' }])
+    vi.restoreAllMocks()
+  })
+
+  it('list mode forwards status and limit', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi
+      .spyOn(client, 'wireBuildList')
+      .mockResolvedValue({ status: 'ok', build_requests: [], pagination: {} })
+
+    await dispatchTool(client, 'wire_build_status', { status: 'pending', limit: 5 })
+
+    expect(spy).toHaveBeenCalledWith({ status: 'pending', limit: 5 })
     vi.restoreAllMocks()
   })
 })

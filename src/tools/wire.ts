@@ -333,7 +333,7 @@ const wireLoginTool: AnakinTool = {
 const wireBuildTool: AnakinTool = {
   name: 'wire_build',
   description:
-    "Request brand-new Wire actions for a website that isn't in the catalog yet — a full catalog build. Describe the site (`website_url`) and what to build (`goal`); optionally list the discrete capabilities as `actions` (each becomes its own action), pin the proxy exit `country`, and attach a login `credential` to build actions behind a sign-in. Wire generates and auto-tests the scrapers, then publishes them. Asynchronous — the response's `build_request` carries an `id` and status \"pending\"; when it completes, its `skipped` list names anything the build could not deliver. Charges credits (login builds cost significantly more than public builds), refunded automatically if the build fails. Only use this after wire_discover / wire_catalog confirm no existing action covers the site.",
+    "Request brand-new Wire actions for a website that isn't in the catalog yet — a full catalog build. Describe the site (`website_url`) and what to build (`goal`); optionally list the discrete capabilities as `actions` (each becomes its own action), pin the proxy exit `country`, and attach a login `credential` to build actions behind a sign-in. Wire generates and auto-tests the scrapers, then publishes them. Asynchronous — the response's `build_request` carries an `id` and status \"pending\"; when it completes, its `skipped` list names anything the build could not deliver. Charges credits (login builds cost significantly more than public builds), refunded automatically if the build fails. Track progress with wire_build_status. Only use this after wire_discover / wire_catalog confirm no existing action covers the site.",
   annotations: {
     title: 'Build a new Wire action',
     // Spends credits and publishes a new catalog action (a side effect) → prompt.
@@ -456,6 +456,74 @@ const wireBuildTool: AnakinTool = {
   },
 }
 
+const wireBuildStatusTool: AnakinTool = {
+  name: 'wire_build_status',
+  description:
+    'Check on Wire builds started with wire_build. Pass the `id` from wire_build\'s build_request to get that build\'s full detail: its status ("pending"/"processing" → still running, poll again after ~30s), the published actions (each with the action_id to run it via wire_read_action / wire_write_action), the `skipped` list (capabilities the build could not deliver — always check it, delivery may be partial), and the catalog_slug once an action has published. Omit `id` to list your recent build requests instead (optionally filtered by `status`). Read-only; spends no credits.',
+  annotations: {
+    title: 'Check a Wire build',
+    readOnlyHint: true,
+    destructiveHint: false,
+    openWorldHint: false,
+  },
+  inputSchema: {
+    type: 'object',
+    properties: {
+      id: {
+        type: 'string',
+        description:
+          "A build request id (from wire_build's response). Omit to list recent builds.",
+      },
+      status: {
+        type: 'string',
+        description:
+          'List mode only — filter by status (e.g. "pending", "processing", "success", "failed").',
+      },
+      limit: {
+        type: 'integer',
+        description: 'List mode only — maximum builds to return.',
+        minimum: 1,
+        default: 10,
+      },
+      include_events: {
+        type: 'boolean',
+        description:
+          "Detail mode only — include the build's step-by-step event log (verbose; default false).",
+        default: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    description:
+      'With `id`: { build_request, actions, skipped inside build_request, catalog_slug, events? }. Without `id`: { build_requests, pagination }.',
+    additionalProperties: true,
+  },
+  handler: async (client, args) => {
+    if (typeof args['id'] === 'string' && args['id'] !== '') {
+      const result = await client.wireBuildStatus(args['id'])
+      // The step-event log is UI-oriented and verbose — drop it unless asked,
+      // so a poll loop stays cheap for the model.
+      if (
+        args['include_events'] !== true &&
+        result !== null &&
+        typeof result === 'object' &&
+        'events' in result
+      ) {
+        const { events: _events, ...rest } = result as Record<string, unknown>
+        return okJson(rest)
+      }
+      return okJson(result)
+    }
+    const options: Parameters<typeof client.wireBuildList>[0] = {}
+    if (typeof args['status'] === 'string') options.status = args['status']
+    if (typeof args['limit'] === 'number') options.limit = args['limit']
+    const result = await client.wireBuildList(options)
+    return okJson(result)
+  },
+}
+
 /** Build an actionable error envelope for an auth failure running a Wire action. */
 function authGuidance(actionId: string, err: AnakinError): ToolContent {
   const connectUrl =
@@ -491,4 +559,5 @@ export const wireTools: AnakinTool[] = [
   wireIdentitiesTool,
   wireLoginTool,
   wireBuildTool,
+  wireBuildStatusTool,
 ]
