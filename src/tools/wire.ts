@@ -24,9 +24,38 @@
  */
 
 import { AnakinError } from '../client.js'
+import type { WireBuildCredential } from '../client.js'
 import type { AnakinTool, ToolContent } from './index.js'
 import { okJson } from './index.js'
 import { financialBlockReason, describeParams } from './policy.js'
+
+/**
+ * A tool-level input rejection. server.ts uses the low-level SDK `Server`,
+ * whose dispatchTool does NOT validate arguments against inputSchema — so
+ * `required`/`type`/`enum` are advisory only. Some clients stringify nested
+ * objects; without these guards a malformed `actions`/`credential`/`id` would be
+ * silently dropped and the request would run anyway (wrong build, spent credits,
+ * or the wrong mode) with no error. Reject explicitly instead.
+ */
+function inputError(text: string): ToolContent {
+  return { isError: true, content: [{ type: 'text', text }] }
+}
+
+/**
+ * Some MCP clients flatten a nested object/array argument into a JSON string
+ * before it reaches the server. Accept that form by parsing it, so a caller that
+ * passes `credential`/`actions` as a string still works instead of being bounced.
+ * Returns the parsed value, the value unchanged if it wasn't a string, or
+ * undefined if a string couldn't be parsed as JSON.
+ */
+function coerceJson(v: unknown): unknown {
+  if (typeof v !== 'string') return v
+  try {
+    return JSON.parse(v)
+  } catch {
+    return undefined
+  }
+}
 
 const wireDiscoverTool: AnakinTool = {
   name: 'wire_discover',
@@ -425,9 +454,58 @@ const wireBuildTool: AnakinTool = {
   handler: async (client, args) => {
     const websiteUrl = String(args['website_url'])
     const goal = String(args['goal'])
-    const actions = Array.isArray(args['actions'])
-      ? (args['actions'] as unknown[]).filter((a): a is string => typeof a === 'string')
-      : undefined
+
+    // Coerce a flattened `actions` (JSON-array string, or a single capability
+    // given as a bare string) rather than silently dropping it (see coerceJson).
+    let actions: string[] | undefined
+    if (args['actions'] !== undefined) {
+      const parsed = coerceJson(args['actions'])
+      const arr = Array.isArray(parsed)
+        ? parsed
+        : typeof args['actions'] === 'string'
+          ? [args['actions']]
+          : undefined
+      if (!arr || !arr.every((a) => typeof a === 'string')) {
+        return inputError(
+          '`actions` must be an array of strings — or a single capability as a plain string, or a JSON-array string (e.g. ["search products", "get product details"]). Omit it to let the builder infer the capabilities from `goal`.',
+        )
+      }
+      actions = arr as string[]
+    }
+
+    // Coerce a flattened `credential` (a JSON-string object) rather than silently
+    // running a public build; only error when it can't resolve (see coerceJson).
+    let credential: WireBuildCredential | undefined
+    if (args['credential'] !== undefined) {
+      const cred = coerceJson(args['credential'])
+      if (typeof cred !== 'object' || cred === null || Array.isArray(cred)) {
+        return inputError(
+          '`credential` must be an object (or a JSON string of one) — { type: "plain", username, password } or { type: "vault", source_id, source_ref }. Omit it for a public (no-login) build.',
+        )
+      }
+      const c = cred as Record<string, unknown>
+      if (c['type'] === 'plain') {
+        if (typeof c['username'] !== 'string' || typeof c['password'] !== 'string') {
+          return inputError(
+            'A "plain" credential needs both `username` and `password` (strings).',
+          )
+        }
+      } else if (c['type'] === 'vault') {
+        if (
+          typeof c['source_id'] !== 'string' ||
+          typeof c['source_ref'] !== 'object' ||
+          c['source_ref'] === null
+        ) {
+          return inputError(
+            'A "vault" credential needs `source_id` (string) and `source_ref` (object).',
+          )
+        }
+      } else {
+        return inputError('`credential.type` must be "plain" or "vault".')
+      }
+      credential = c as unknown as WireBuildCredential
+    }
+
     // Don't build payment/transfer actions either — keep the catalog compliant.
     const blocked = financialBlockReason(
       `${goal} ${websiteUrl}${actions?.length ? ` ${actions.join(' ')}` : ''}`,
@@ -445,11 +523,7 @@ const wireBuildTool: AnakinTool = {
     if (typeof args['force'] === 'boolean') body.force = args['force']
     if (actions?.length) body.actions = actions
     if (typeof args['country'] === 'string') body.country = args['country']
-    if (typeof args['credential'] === 'object' && args['credential'] !== null) {
-      body.credential = args['credential'] as NonNullable<
-        Parameters<typeof client.wireBuild>[0]['credential']
-      >
-    }
+    if (credential) body.credential = credential
 
     const result = await client.wireBuild(body)
     return okJson(result)
@@ -481,9 +555,17 @@ const wireBuildStatusTool: AnakinTool = {
       },
       limit: {
         type: 'integer',
-        description: 'List mode only — maximum builds to return.',
+        description: 'List mode only — maximum builds to return per page.',
         minimum: 1,
+        maximum: 100,
         default: 10,
+      },
+      page: {
+        type: 'integer',
+        description:
+          'List mode only — 1-based page number, for paging past the first `limit` builds (see `pagination.total` in the result).',
+        minimum: 1,
+        default: 1,
       },
       include_events: {
         type: 'boolean',
@@ -501,7 +583,14 @@ const wireBuildStatusTool: AnakinTool = {
     additionalProperties: true,
   },
   handler: async (client, args) => {
-    if (typeof args['id'] === 'string' && args['id'] !== '') {
+    // Detail vs list mode keys off the PRESENCE of `id`, not its truthiness — a
+    // blank id must error, not silently fall through to list mode (see inputError).
+    if (args['id'] !== undefined) {
+      if (typeof args['id'] !== 'string' || args['id'] === '') {
+        return inputError(
+          "`id` must be a non-empty build request id (from wire_build's response). Omit `id` entirely to list your recent builds.",
+        )
+      }
       const result = await client.wireBuildStatus(args['id'])
       // The step-event log is UI-oriented and verbose — drop it unless asked,
       // so a poll loop stays cheap for the model.
@@ -518,7 +607,10 @@ const wireBuildStatusTool: AnakinTool = {
     }
     const options: Parameters<typeof client.wireBuildList>[0] = {}
     if (typeof args['status'] === 'string') options.status = args['status']
-    if (typeof args['limit'] === 'number') options.limit = args['limit']
+    // Always forward a limit so the advertised default (10) actually applies —
+    // otherwise the API falls back to its own default (20).
+    options.limit = typeof args['limit'] === 'number' ? args['limit'] : 10
+    if (typeof args['page'] === 'number') options.page = args['page']
     const result = await client.wireBuildList(options)
     return okJson(result)
   },

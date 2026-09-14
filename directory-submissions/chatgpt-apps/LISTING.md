@@ -45,8 +45,8 @@ top of it.
 
 - **Every tool needs `annotations`** with `readOnlyHint`, `destructiveHint`,
   `openWorldHint` set correctly — flagged by OpenAI's own guidelines as the
-  most common rejection cause. The Claude packet already classifies all 21
-  tools into 14 read-only / 7 destructive
+  most common rejection cause. The Claude packet already classifies all 22
+  tools into 15 read-only / 7 destructive
   (`anakin-mcp-remote/compliance/LISTING.md` § "Tools & annotations") — the
   `readOnlyHint`/`destructiveHint` values map directly. `openWorldHint`
   isn't part of Claude's classification and needs adding: true for anything

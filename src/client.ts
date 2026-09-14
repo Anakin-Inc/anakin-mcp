@@ -354,13 +354,14 @@ export class AnakinClient {
 
   /** The caller's build requests, newest first, optionally filtered by status. */
   async wireBuildList(
-    options: { status?: string; limit?: number } = {},
+    options: { status?: string; limit?: number; page?: number } = {},
   ): Promise<unknown> {
     return await this.request<unknown>(
       'GET',
       withQuery('/wire/build-requests', {
         status: options.status,
         limit: options.limit,
+        page: options.page,
       }),
     )
   }
