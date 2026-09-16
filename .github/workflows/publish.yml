@@ -1,0 +1,64 @@
+name: Publish to npm
+
+# Fully automatic releases. Every push to main is analyzed by semantic-release:
+#   fix:/perf:/refactor: -> patch, feat: -> minor, "BREAKING CHANGE" -> major.
+#   docs:/chore:/ci:/test: commits produce no release.
+# On a release it bumps package.json, updates CHANGELOG.md, publishes to npm
+# with provenance (trusted publishing, no token), tags vX.Y.Z, and creates a
+# GitHub release. The workflow filename and the `npm` environment are bound to
+# the npm trusted-publisher config — renaming either breaks publishing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # push release commit + tag, create GitHub release
+  issues: write # open an issue if the release fails
+  pull-requests: write
+  id-token: write # npm trusted publishing (OIDC) + provenance
+
+concurrency:
+  group: publish-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    # Belt-and-braces: the release commit is pushed with GITHUB_TOKEN (which
+    # never triggers workflows) and carries [skip ci]; this guards both.
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # semantic-release needs full history + tags
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24 # npm >= 11.5 required for trusted publishing
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: npm ci
+
+      # Fail here, before semantic-release has pushed anything, rather than
+      # inside `npm publish` after the tag and release commit already exist.
+      - name: Typecheck, test, build
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
