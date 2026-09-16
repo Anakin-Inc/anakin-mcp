@@ -24,9 +24,38 @@
  */
 
 import { AnakinError } from '../client.js'
+import type { WireBuildCredential } from '../client.js'
 import type { AnakinTool, ToolContent } from './index.js'
 import { okJson } from './index.js'
 import { financialBlockReason, describeParams } from './policy.js'
+
+/**
+ * A tool-level input rejection. server.ts uses the low-level SDK `Server`,
+ * whose dispatchTool does NOT validate arguments against inputSchema — so
+ * `required`/`type`/`enum` are advisory only. Some clients stringify nested
+ * objects; without these guards a malformed `actions`/`credential`/`id` would be
+ * silently dropped and the request would run anyway (wrong build, spent credits,
+ * or the wrong mode) with no error. Reject explicitly instead.
+ */
+function inputError(text: string): ToolContent {
+  return { isError: true, content: [{ type: 'text', text }] }
+}
+
+/**
+ * Some MCP clients flatten a nested object/array argument into a JSON string
+ * before it reaches the server. Accept that form by parsing it, so a caller that
+ * passes `credential`/`actions` as a string still works instead of being bounced.
+ * Returns the parsed value, the value unchanged if it wasn't a string, or
+ * undefined if a string couldn't be parsed as JSON.
+ */
+function coerceJson(v: unknown): unknown {
+  if (typeof v !== 'string') return v
+  try {
+    return JSON.parse(v)
+  } catch {
+    return undefined
+  }
+}
 
 const wireDiscoverTool: AnakinTool = {
   name: 'wire_discover',
@@ -333,7 +362,7 @@ const wireLoginTool: AnakinTool = {
 const wireBuildTool: AnakinTool = {
   name: 'wire_build',
   description:
-    "Request a brand-new Wire action for a website that isn't in the catalog yet. Describe the site (`website_url`) and what the action should do or extract (`goal`); Wire generates and auto-tests a scraper, then publishes it. Asynchronous (returns status \"pending\") and charges credits, refunded automatically if the build fails. Only use this after wire_discover / wire_catalog confirm no existing action covers the site.",
+    "Request brand-new Wire actions for a website that isn't in the catalog yet — a full catalog build. Describe the site (`website_url`) and what to build (`goal`); optionally list the discrete capabilities as `actions` (each becomes its own action), pin the proxy exit `country`, and attach a login `credential` to build actions behind a sign-in. Wire generates and auto-tests the scrapers, then publishes them. Asynchronous — the response's `build_request` carries an `id` and status \"pending\"; when it completes, its `skipped` list names anything the build could not deliver. Charges credits (login builds cost significantly more than public builds), refunded automatically if the build fails. Track progress with wire_build_status. Only use this after wire_discover / wire_catalog confirm no existing action covers the site.",
   annotations: {
     title: 'Build a new Wire action',
     // Spends credits and publishes a new catalog action (a side effect) → prompt.
@@ -368,6 +397,43 @@ const wireBuildTool: AnakinTool = {
           'Build even if similar actions already exist for the domain (otherwise the request is rejected with ACTION_EXISTS).',
         default: false,
       },
+      actions: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Optional list of discrete capabilities to build, each as its own action (e.g. ["search products", "get product details"]). Omit to let the builder infer them from `goal`.',
+      },
+      country: {
+        type: 'string',
+        description:
+          'Optional 2-letter country code (e.g. "US") — the scraper is built and tested through an exit IP in that country. Use when the site geo-gates its content.',
+      },
+      credential: {
+        type: 'object',
+        description:
+          'Optional login credential, for building actions behind a sign-in (a login build — costs significantly more credits than a public build). Plain shape: { type: "plain", username, password }. Vault shape (an entry in a connected 1Password/Azure identity source): { type: "vault", source_id, source_ref }. Either shape may add `login_url` when the login form lives somewhere other than website_url. The password is used once by the builder to sign in and is never stored.',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['plain', 'vault'],
+            description: '"plain" for a typed username/password, "vault" for a connected identity-source entry.',
+          },
+          username: { type: 'string', description: 'Plain shape — the account username or email.' },
+          password: { type: 'string', description: 'Plain shape — the account password. Never stored.' },
+          source_id: { type: 'string', description: 'Vault shape — the connected identity-source ID.' },
+          source_ref: {
+            type: 'object',
+            description: 'Vault shape — locator of the entry inside the source.',
+            additionalProperties: true,
+          },
+          login_url: {
+            type: 'string',
+            description: "Where the site's login form lives, when it differs from website_url.",
+          },
+        },
+        required: ['type'],
+        additionalProperties: false,
+      },
     },
     required: ['website_url', 'goal'],
     additionalProperties: false,
@@ -375,9 +441,12 @@ const wireBuildTool: AnakinTool = {
   outputSchema: {
     type: 'object',
     properties: {
-      status: {
-        type: 'string',
-        description: 'e.g. "pending" — the build runs asynchronously.',
+      status: { type: 'string', description: '"ok" on acceptance.' },
+      build_request: {
+        type: 'object',
+        description:
+          'The created build request — its `id` and `status` ("pending") track the asynchronous build; once finished, `skipped` names anything the build could not deliver.',
+        additionalProperties: true,
       },
     },
     additionalProperties: true,
@@ -385,8 +454,62 @@ const wireBuildTool: AnakinTool = {
   handler: async (client, args) => {
     const websiteUrl = String(args['website_url'])
     const goal = String(args['goal'])
+
+    // Coerce a flattened `actions` (JSON-array string, or a single capability
+    // given as a bare string) rather than silently dropping it (see coerceJson).
+    let actions: string[] | undefined
+    if (args['actions'] !== undefined) {
+      const parsed = coerceJson(args['actions'])
+      const arr = Array.isArray(parsed)
+        ? parsed
+        : typeof args['actions'] === 'string'
+          ? [args['actions']]
+          : undefined
+      if (!arr || !arr.every((a) => typeof a === 'string')) {
+        return inputError(
+          '`actions` must be an array of strings — or a single capability as a plain string, or a JSON-array string (e.g. ["search products", "get product details"]). Omit it to let the builder infer the capabilities from `goal`.',
+        )
+      }
+      actions = arr as string[]
+    }
+
+    // Coerce a flattened `credential` (a JSON-string object) rather than silently
+    // running a public build; only error when it can't resolve (see coerceJson).
+    let credential: WireBuildCredential | undefined
+    if (args['credential'] !== undefined) {
+      const cred = coerceJson(args['credential'])
+      if (typeof cred !== 'object' || cred === null || Array.isArray(cred)) {
+        return inputError(
+          '`credential` must be an object (or a JSON string of one) — { type: "plain", username, password } or { type: "vault", source_id, source_ref }. Omit it for a public (no-login) build.',
+        )
+      }
+      const c = cred as Record<string, unknown>
+      if (c['type'] === 'plain') {
+        if (typeof c['username'] !== 'string' || typeof c['password'] !== 'string') {
+          return inputError(
+            'A "plain" credential needs both `username` and `password` (strings).',
+          )
+        }
+      } else if (c['type'] === 'vault') {
+        if (
+          typeof c['source_id'] !== 'string' ||
+          typeof c['source_ref'] !== 'object' ||
+          c['source_ref'] === null
+        ) {
+          return inputError(
+            'A "vault" credential needs `source_id` (string) and `source_ref` (object).',
+          )
+        }
+      } else {
+        return inputError('`credential.type` must be "plain" or "vault".')
+      }
+      credential = c as unknown as WireBuildCredential
+    }
+
     // Don't build payment/transfer actions either — keep the catalog compliant.
-    const blocked = financialBlockReason(`${goal} ${websiteUrl}`)
+    const blocked = financialBlockReason(
+      `${goal} ${websiteUrl}${actions?.length ? ` ${actions.join(' ')}` : ''}`,
+    )
     if (blocked) return { isError: true, content: [{ type: 'text', text: blocked }] }
 
     const body: Parameters<typeof client.wireBuild>[0] = {
@@ -398,8 +521,97 @@ const wireBuildTool: AnakinTool = {
       body.visibility = args['visibility']
     }
     if (typeof args['force'] === 'boolean') body.force = args['force']
+    if (actions?.length) body.actions = actions
+    if (typeof args['country'] === 'string') body.country = args['country']
+    if (credential) body.credential = credential
 
     const result = await client.wireBuild(body)
+    return okJson(result)
+  },
+}
+
+const wireBuildStatusTool: AnakinTool = {
+  name: 'wire_build_status',
+  description:
+    'Check on Wire builds started with wire_build. Pass the `id` from wire_build\'s build_request to get that build\'s full detail: its status ("pending"/"processing" → still running, poll again after ~30s), the published actions (each with the action_id to run it via wire_read_action / wire_write_action), the `skipped` list (capabilities the build could not deliver — always check it, delivery may be partial), and the catalog_slug once an action has published. Omit `id` to list your recent build requests instead (optionally filtered by `status`). Read-only; spends no credits.',
+  annotations: {
+    title: 'Check a Wire build',
+    readOnlyHint: true,
+    destructiveHint: false,
+    openWorldHint: false,
+  },
+  inputSchema: {
+    type: 'object',
+    properties: {
+      id: {
+        type: 'string',
+        description:
+          "A build request id (from wire_build's response). Omit to list recent builds.",
+      },
+      status: {
+        type: 'string',
+        description:
+          'List mode only — filter by status (e.g. "pending", "processing", "success", "failed").',
+      },
+      limit: {
+        type: 'integer',
+        description: 'List mode only — maximum builds to return per page.',
+        minimum: 1,
+        maximum: 100,
+        default: 10,
+      },
+      page: {
+        type: 'integer',
+        description:
+          'List mode only — 1-based page number, for paging past the first `limit` builds (see `pagination.total` in the result).',
+        minimum: 1,
+        default: 1,
+      },
+      include_events: {
+        type: 'boolean',
+        description:
+          "Detail mode only — include the build's step-by-step event log (verbose; default false).",
+        default: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    description:
+      'With `id`: { build_request, actions, skipped inside build_request, catalog_slug, events? }. Without `id`: { build_requests, pagination }.',
+    additionalProperties: true,
+  },
+  handler: async (client, args) => {
+    // Detail vs list mode keys off the PRESENCE of `id`, not its truthiness — a
+    // blank id must error, not silently fall through to list mode (see inputError).
+    if (args['id'] !== undefined) {
+      if (typeof args['id'] !== 'string' || args['id'] === '') {
+        return inputError(
+          "`id` must be a non-empty build request id (from wire_build's response). Omit `id` entirely to list your recent builds.",
+        )
+      }
+      const result = await client.wireBuildStatus(args['id'])
+      // The step-event log is UI-oriented and verbose — drop it unless asked,
+      // so a poll loop stays cheap for the model.
+      if (
+        args['include_events'] !== true &&
+        result !== null &&
+        typeof result === 'object' &&
+        'events' in result
+      ) {
+        const { events: _events, ...rest } = result as Record<string, unknown>
+        return okJson(rest)
+      }
+      return okJson(result)
+    }
+    const options: Parameters<typeof client.wireBuildList>[0] = {}
+    if (typeof args['status'] === 'string') options.status = args['status']
+    // Always forward a limit so the advertised default (10) actually applies —
+    // otherwise the API falls back to its own default (20).
+    options.limit = typeof args['limit'] === 'number' ? args['limit'] : 10
+    if (typeof args['page'] === 'number') options.page = args['page']
+    const result = await client.wireBuildList(options)
     return okJson(result)
   },
 }
@@ -439,4 +651,5 @@ export const wireTools: AnakinTool[] = [
   wireIdentitiesTool,
   wireLoginTool,
   wireBuildTool,
+  wireBuildStatusTool,
 ]

@@ -344,6 +344,28 @@ export class AnakinClient {
     return await this.request<unknown>('POST', '/wire/build-request', body)
   }
 
+  /** One build request: status, published actions, step events, skips. */
+  async wireBuildStatus(id: string): Promise<unknown> {
+    return await this.request<unknown>(
+      'GET',
+      `/wire/build-requests/${encodeURIComponent(id)}`,
+    )
+  }
+
+  /** The caller's build requests, newest first, optionally filtered by status. */
+  async wireBuildList(
+    options: { status?: string; limit?: number; page?: number } = {},
+  ): Promise<unknown> {
+    return await this.request<unknown>(
+      'GET',
+      withQuery('/wire/build-requests', {
+        status: options.status,
+        limit: options.limit,
+        page: options.page,
+      }),
+    )
+  }
+
   // ── Website Monitoring ────────────────────────────────────────────────
 
   async monitorCreate(
@@ -615,12 +637,29 @@ export interface WireLoginRequest {
   source_ref?: Record<string, unknown>
 }
 
+/**
+ * Login credential attached to a build request. Mirrors the engine's
+ * BuildCredentialInput: exactly one shape per `type` — plain carries
+ * username/password, vault points at a connected identity-source entry.
+ */
+export interface WireBuildCredential {
+  type: 'plain' | 'vault'
+  username?: string
+  password?: string
+  source_id?: string
+  source_ref?: Record<string, unknown>
+  login_url?: string
+}
+
 export interface WireBuildRequest {
   website_url: string
   goal: string
   catalog_id?: string
   visibility?: 'private' | 'public'
   force?: boolean
+  actions?: string[]
+  country?: string
+  credential?: WireBuildCredential
 }
 
 // ── Website Monitoring ──────────────────────────────────────────────────

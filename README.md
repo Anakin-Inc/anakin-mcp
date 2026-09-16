@@ -42,6 +42,7 @@ If you prefer to edit config files yourself, see [Manual setup per client](#manu
 | `wire_identities` | List saved accounts/credentials for auth-required actions. |
 | `wire_login` | Sign in to a credentials-mode site → `credential_id`. |
 | `wire_build` | Request a brand-new action for a site not yet in the catalog. |
+| `wire_build_status` | Check a `wire_build` request — status, published actions, skips (or list recent builds). |
 | `monitor_create` | Watch a page/site/Wire action on a schedule; alert on change. |
 | `monitor_list` | List your monitors (or fetch one by id). |
 | `monitor_changes` | Detected changes for a monitor. |

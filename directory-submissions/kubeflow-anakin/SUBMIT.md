@@ -7,7 +7,7 @@ components (any Kubeflow user can already call Anakin's API from a plain
 for discoverability/reuse of common ones).
 
 Kubeflow components are one-per-operation (unlike a multi-endpoint SDK), so
-Anakin's MCP tool surface — 21 tools across `anakin-mcp/src/tools/*.ts` — is
+Anakin's MCP tool surface — 22 tools across `anakin-mcp/src/tools/*.ts` — is
 split into 21 sibling component directories, one per tool, each independently
 usable as a pipeline step.
 

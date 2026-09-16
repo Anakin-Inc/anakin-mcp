@@ -37,6 +37,7 @@ const EXPECTED_TOOL_NAMES = [
   'wire_identities',
   'wire_login',
   'wire_build',
+  'wire_build_status',
   'monitor_create',
   'monitor_list',
   'monitor_changes',
@@ -289,5 +290,272 @@ describe('ok / okJson helpers', () => {
     const result = okJson({ a: 1, b: [2, 3] })
     expect(result.content[0]?.type).toBe('text')
     expect(JSON.parse(result.content[0]!.text)).toEqual({ a: 1, b: [2, 3] })
+  })
+})
+
+describe('wire_build catalog-build shape', () => {
+  const build = () => tools.find((t) => t.name === 'wire_build')!
+
+  it('accepts actions, country, and credential (credential requires type)', () => {
+    const schema = build().inputSchema as {
+      properties: Record<string, Record<string, unknown>>
+    }
+    expect(schema.properties['actions']?.['type']).toBe('array')
+    expect(schema.properties['country']?.['type']).toBe('string')
+    const cred = schema.properties['credential'] as {
+      required?: string[]
+      properties?: Record<string, { enum?: string[] }>
+      additionalProperties?: boolean
+    }
+    expect(cred.required).toEqual(['type'])
+    expect(cred.properties?.['type']?.enum).toEqual(['plain', 'vault'])
+    expect(cred.additionalProperties).toBe(false)
+  })
+
+  it('forwards actions, country, and credential to the API', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi
+      .spyOn(client, 'wireBuild')
+      .mockResolvedValue({ status: 'ok', build_request: { id: 'br1', status: 'pending' } })
+
+    const credential = {
+      type: 'plain',
+      username: 'user@example.com',
+      password: 'pw',
+      login_url: 'https://example.com/login',
+    }
+    const result = await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'read product details',
+      actions: ['search products', 'get product details'],
+      country: 'US',
+      credential,
+    })
+
+    expect(spy).toHaveBeenCalledWith({
+      website_url: 'https://example.com',
+      goal: 'read product details',
+      actions: ['search products', 'get product details'],
+      country: 'US',
+      credential,
+    })
+    expect(result.isError).toBeUndefined()
+    vi.restoreAllMocks()
+  })
+
+  it('omits the new fields entirely when not given (back-compat body)', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi
+      .spyOn(client, 'wireBuild')
+      .mockResolvedValue({ status: 'ok', build_request: { id: 'br2', status: 'pending' } })
+
+    await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'read product details',
+    })
+
+    expect(spy).toHaveBeenCalledWith({
+      website_url: 'https://example.com',
+      goal: 'read product details',
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('financial block also scans the actions list', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi.spyOn(client, 'wireBuild')
+
+    const result = await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'automate my account',
+      actions: ['transfer funds to another account'],
+    })
+
+    expect(result.isError).toBe(true)
+    expect(spy).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+  })
+
+  it('accepts a stringified credential (client flattened the object) instead of a silent public build', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi
+      .spyOn(client, 'wireBuild')
+      .mockResolvedValue({ status: 'ok', build_request: { id: 'br3', status: 'pending' } })
+
+    const result = await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'read my dashboard',
+      credential: '{"type":"plain","username":"u","password":"p"}',
+    })
+
+    expect(result.isError).toBeUndefined()
+    expect(spy).toHaveBeenCalledWith({
+      website_url: 'https://example.com',
+      goal: 'read my dashboard',
+      credential: { type: 'plain', username: 'u', password: 'p' },
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('rejects a credential string that is not resolvable JSON', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi.spyOn(client, 'wireBuild')
+
+    const result = await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'read my dashboard',
+      credential: 'my username is u and password p',
+    })
+
+    expect(result.isError).toBe(true)
+    expect(spy).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+  })
+
+  it('rejects a plain credential missing its password', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi.spyOn(client, 'wireBuild')
+
+    const result = await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'read my dashboard',
+      credential: { type: 'plain', username: 'u' },
+    })
+
+    expect(result.isError).toBe(true)
+    expect(spy).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+  })
+
+  it('accepts a single capability given as a bare string (wrapped as one action)', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi
+      .spyOn(client, 'wireBuild')
+      .mockResolvedValue({ status: 'ok', build_request: { id: 'br4', status: 'pending' } })
+
+    await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'read products',
+      actions: 'get order history',
+    })
+
+    expect(spy).toHaveBeenCalledWith({
+      website_url: 'https://example.com',
+      goal: 'read products',
+      actions: ['get order history'],
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('accepts a JSON-array string of actions', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi
+      .spyOn(client, 'wireBuild')
+      .mockResolvedValue({ status: 'ok', build_request: { id: 'br5', status: 'pending' } })
+
+    await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'read products',
+      actions: '["search products", "get product details"]',
+    })
+
+    expect(spy).toHaveBeenCalledWith({
+      website_url: 'https://example.com',
+      goal: 'read products',
+      actions: ['search products', 'get product details'],
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('rejects actions of a non-string, non-array type', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi.spyOn(client, 'wireBuild')
+
+    const result = await dispatchTool(client, 'wire_build', {
+      website_url: 'https://example.com',
+      goal: 'read products',
+      actions: 42,
+    })
+
+    expect(result.isError).toBe(true)
+    expect(spy).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+  })
+})
+
+describe('wire_build_status tool', () => {
+  it('detail mode fetches by id and strips the verbose events log by default', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi.spyOn(client, 'wireBuildStatus').mockResolvedValue({
+      status: 'ok',
+      build_request: { id: 'br1', status: 'success', skipped: [] },
+      actions: [{ action_id: 'act_1', status: 'active' }],
+      events: [{ step: 'noisy' }],
+      catalog_slug: 'example',
+    })
+
+    const result = await dispatchTool(client, 'wire_build_status', { id: 'br1' })
+
+    expect(spy).toHaveBeenCalledWith('br1')
+    expect(result.isError).toBeUndefined()
+    const payload = JSON.parse(result.content[0]!.text)
+    expect(payload.build_request.id).toBe('br1')
+    expect(payload.actions[0].action_id).toBe('act_1')
+    expect(payload).not.toHaveProperty('events')
+    vi.restoreAllMocks()
+  })
+
+  it('detail mode keeps events when include_events is true', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    vi.spyOn(client, 'wireBuildStatus').mockResolvedValue({
+      status: 'ok',
+      build_request: { id: 'br1', status: 'processing' },
+      events: [{ step: 'fetching page' }],
+    })
+
+    const result = await dispatchTool(client, 'wire_build_status', {
+      id: 'br1',
+      include_events: true,
+    })
+    const payload = JSON.parse(result.content[0]!.text)
+    expect(payload.events).toEqual([{ step: 'fetching page' }])
+    vi.restoreAllMocks()
+  })
+
+  it('list mode forwards status, limit, and page', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi
+      .spyOn(client, 'wireBuildList')
+      .mockResolvedValue({ status: 'ok', build_requests: [], pagination: {} })
+
+    await dispatchTool(client, 'wire_build_status', { status: 'pending', limit: 5, page: 2 })
+
+    expect(spy).toHaveBeenCalledWith({ status: 'pending', limit: 5, page: 2 })
+    vi.restoreAllMocks()
+  })
+
+  it('list mode applies the advertised default limit of 10 when omitted', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const spy = vi
+      .spyOn(client, 'wireBuildList')
+      .mockResolvedValue({ status: 'ok', build_requests: [], pagination: {} })
+
+    await dispatchTool(client, 'wire_build_status', {})
+
+    expect(spy).toHaveBeenCalledWith({ limit: 10 })
+    vi.restoreAllMocks()
+  })
+
+  it('rejects a blank id instead of silently switching to list mode', async () => {
+    const client = new AnakinClient({ apiKey: 'ak-test' })
+    const detail = vi.spyOn(client, 'wireBuildStatus')
+    const list = vi.spyOn(client, 'wireBuildList')
+
+    const result = await dispatchTool(client, 'wire_build_status', { id: '' })
+
+    expect(result.isError).toBe(true)
+    expect(detail).not.toHaveBeenCalled()
+    expect(list).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
   })
 })
